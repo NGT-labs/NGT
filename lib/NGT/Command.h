@@ -31,6 +31,7 @@ class Command {
     size_t numOfObjects;
     NGT::Property property;
     char indexType;
+    bool verbose;
   };
 
   class SearchParameters {
@@ -184,6 +185,9 @@ class Command {
   void exportObjects(Args &args);
   void rebuild(Args &args);
   void preprocessForPQ(Args &args);
+#ifdef NGT_FOREST
+  void constructForestGraph(NGT::Args &args);
+#endif
 
   void info(Args &args);
   void setDebugLevel(int level) { debugLevel = level; }

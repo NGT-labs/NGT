@@ -30,6 +30,9 @@ using namespace std;
 #include "NGT/ObjectSpace.h"
 #include "NGTQ/ObjectFile.h"
 #endif
+#ifdef NGT_FOREST
+#include <filesystem>
+#endif
 
 NGT::Command::CreateParameters::CreateParameters(Args &args) {
   args.parse("v");
@@ -46,6 +49,7 @@ NGT::Command::CreateParameters::CreateParameters(Args &args) {
   } catch (...) {
   }
 
+  verbose                             = !args.getBool("v");
   property.edgeSizeForCreation        = args.getl("E", 10);
   property.edgeSizeForSearch          = args.getl("S", 40);
   property.batchSizeForCreation       = args.getl("b", 200);
@@ -56,6 +60,28 @@ NGT::Command::CreateParameters::CreateParameters(Args &args) {
   property.pathAdjustmentInterval     = args.getl("P", 0);
   property.dynamicEdgeSizeBase        = args.getl("B", 30);
   property.buildTimeLimit             = args.getf("T", 0.0);
+
+  {
+    property.leafNodeSize         = NGT::LeafNode::LeafObjectsSizeMax;
+    property.internalChildrenSize = NGT::InternalNode::InternalChildrenSizeMax;
+    std::string str               = args.getString("L", "-");
+    if (str != "-") {
+      vector<string> tokens;
+      NGT::Common::tokenize(str, tokens, ":");
+      if (tokens.size() != 1 && tokens.size() != 2) {
+        std::stringstream msg;
+        msg << "Command::CreateParameter: Error: leaf node size/internal children size specification is "
+               "invalid. "
+               "(leafNodeSize):(internalChildrenSize) "
+            << str;
+        NGTThrowException(msg);
+      }
+      property.leafNodeSize = NGT::Common::strtol(tokens[0]);
+      if (tokens.size() == 2) {
+        property.internalChildrenSize = NGT::Common::strtol(tokens[1]);
+      }
+    }
+  }
 
   if (property.dimension <= 0) {
     std::stringstream msg;
@@ -271,11 +297,12 @@ void NGT::Command::create(Args &args) {
     switch (createParameters.indexType) {
     case 't':
       NGT::Index::createGraphAndTree(createParameters.index, createParameters.property,
-                                     createParameters.objectPath, createParameters.numOfObjects);
+                                     createParameters.objectPath, createParameters.numOfObjects,
+                                     createParameters.verbose);
       break;
     case 'g':
       NGT::Index::createGraph(createParameters.index, createParameters.property, createParameters.objectPath,
-                              createParameters.numOfObjects);
+                              createParameters.numOfObjects, createParameters.verbose);
       break;
     }
   } catch (NGT::Exception &err) {
@@ -1368,6 +1395,613 @@ void NGT::Command::repair(Args &args) {
     }
   }
 }
+
+#ifdef NGT_FOREST
+void NGT::Command::constructForestGraph(NGT::Args &args) {
+  const string usage = "Usage: ngt construct-forest target-index search-index(ANNG)";
+  string indexPath;
+  try {
+    indexPath = args.get("#1");
+  } catch (...) {
+    std::stringstream msg;
+    msg << "No index is specified." << std::endl;
+    msg << usage << std::endl;
+    NGTThrowException(msg);
+  }
+  string anngPath;
+  try {
+    anngPath = args.get("#2");
+  } catch (...) {
+    std::stringstream msg;
+    msg << "No ANNG is specified." << std::endl;
+    msg << usage << std::endl;
+    NGTThrowException(msg);
+  }
+  std::cerr << "constructForestGraph" << std::endl;
+  std::string clusterSizeStr = args.getString("c", "-"); // Size of clusters to form
+  size_t clusterSize         = 0;
+  float clusterSizeFactor    = 0.0;
+  if (clusterSizeStr.size() > 0 && clusterSizeStr[0] == 'x') {
+    clusterSizeFactor = NGT::Common::strtod(clusterSizeStr.substr(1));
+  } else {
+    clusterSize = NGT::Common::strtol(clusterSizeStr);
+  }
+  std::cerr << "Cluster size: " << clusterSize << ":" << clusterSizeFactor << std::endl;
+  size_t incomingEdge = args.getl("i", 10);
+  size_t outgoingEdge = args.getl("o", 10);
+  size_t epsilon      = args.getf("e", 0.0);
+  std::cerr << "incomingEdge: " << incomingEdge << " outgoingEdge: " << outgoingEdge << std::endl;
+  try {
+    NGT::Property prop;
+    prop.clear();
+    prop.seedType = NGT::Property::SeedType::SeedTypeFirstNode;
+    NGT::Index::create(indexPath, anngPath, prop, true);
+    std::filesystem::copy_file(anngPath + "/obj", indexPath + "/obj",
+                               std::filesystem::copy_options::overwrite_existing);
+    std::filesystem::copy_file(anngPath + "/tre", indexPath + "/tre",
+                               std::filesystem::copy_options::overwrite_existing);
+
+    std::cerr << "Opening index: " << indexPath << std::endl;
+    NGT::Index index(indexPath);
+    std::cerr << "Index opened successfully." << std::endl;
+    size_t repositorySize = index.getObjectRepositorySize();
+    std::cerr << "Repository size: " << repositorySize << std::endl;
+
+    NGT::GraphIndex &graphIndex = static_cast<NGT::GraphIndex &>(index.getIndex());
+    std::cerr << "GraphIndex obtained." << std::endl;
+
+    NGT::ObjectSpace &objectSpace           = index.getObjectSpace();
+    NGT::ObjectRepository &objectRepository = objectSpace.getRepository();
+    NGT::Index anng(anngPath);
+#define USE_LEAF
+    std::vector<bool> isClustered(repositorySize, false);
+    std::vector<NGT::ObjectDistances> clusterIds;
+    std::vector<NGT::ObjectID> seedNodes;
+    std::vector<Node::ID> leafIDs;
+    {
+      NGT::GraphAndTreeIndex &graphAndTreeIndex = static_cast<NGT::GraphAndTreeIndex &>(index.getIndex());
+      graphAndTreeIndex.getAllLeafNodeIDs(leafIDs);
+      clusterIds.reserve(leafIDs.size());
+      size_t objcount = 0;
+      size_t existed  = 0;
+      for (auto &leafid : leafIDs) {
+#ifdef USE_LEAF
+        NGT::LeafNode &leaf = *static_cast<NGT::LeafNode *>(graphAndTreeIndex.DVPTree::getNode(leafid));
+#if defined(NGT_SHARED_MEMORY_ALLOCATOR)
+        NGT::ObjectDistances objs(leaf.getObjectIDs(graphAndTreeIndex.DVPTree::leafNodes.allocator),
+                                  leaf.getObjectIDs(graphAndTreeIndex.DVPTree::leafNodes.allocator) +
+                                      leaf.getObjectSize());
+#else
+        NGT::ObjectDistances objs(leaf.getObjectIDs(), leaf.getObjectIDs() + leaf.getObjectSize());
+#endif
+#ifdef USE_CENTROID
+        {
+          size_t count = 0;
+          std::vector<float> centroid;
+          for (auto &obj : objs) {
+            std::vector<float> v;
+            if (objectRepository.isEmpty(obj.id)) {
+              continue;
+            }
+            objectSpace.getObject(obj.id, v);
+            if (centroid.empty()) {
+              centroid = v;
+            } else {
+              for (size_t i = 0; i < v.size(); ++i) {
+                centroid[i] += v[i];
+              }
+            }
+            count++;
+          }
+          for (auto &value : centroid) {
+            value /= count; // Calculate the mean
+          }
+          NGT::Object *cent = objectSpace.allocateNormalizedObject(centroid);
+          for (auto &obj : objs) {
+
+            NGT::Object &o = *objectRepository.get(obj.id);
+            obj.distance   = objectSpace.getComparator()(*cent, o);
+          }
+          objectSpace.deleteObject(cent);
+          std::cerr << "the head of objects in leaf " << objs[0].id << std::endl;
+          std::sort(objs.begin(), objs.end());
+          std::cerr << "the centroid of objects in leaf " << objs[0].id << std::endl;
+        }
+#endif
+        if (!objs.empty()) {
+          seedNodes.emplace_back(objs[0].id);
+        }
+        for (auto obj : objs) {
+          if (isClustered[obj.id]) {
+            std::cerr << "already extracted! " << obj.id << ":" << leafid.getID() << std::endl;
+            existed++;
+            continue;
+          }
+          isClustered[obj.id] = true;
+          objcount++;
+        }
+        clusterIds.emplace_back(std::move(objs));
+#else
+        NGT::ObjectDistances ids;
+        graphAndTreeIndex.getObjectIDsFromLeaf(leafid, ids);
+        if (!ids.empty()) {
+          seedNodes.emplace_back(ids[0].id);
+        }
+#endif
+      }
+      std::cerr << "Total objects in clusters from leaves: " << objcount << ":" << existed << std::endl;
+    }
+
+    if (clusterSize > 0 || clusterSizeFactor > 0.0) {
+#pragma omp parallel for
+      for (auto it = seedNodes.begin(); it != seedNodes.end(); ++it) {
+        auto nodeId = *it;
+        {
+#ifdef NGT_SHARED_MEMORY_ALLOCATOR
+          NGT::Object *optr =
+              anng.getObjectSpace().allocateObject(*anng.getObjectSpace().getRepository().get(nodeId));
+          NGT::Object &queryObject = *optr;
+#else
+          NGT::Object &queryObject = *anng.getObjectSpace().getRepository().get(nodeId);
+#endif
+          NGT::ObjectDistances results;
+          NGT::SearchContainer searchContainer(queryObject);
+          searchContainer.setResults(&results);
+          size_t size = clusterSize;
+          if (clusterSizeFactor > 0.0) {
+            size = clusterIds[std::distance(seedNodes.begin(), it)].size() * clusterSizeFactor;
+          }
+          searchContainer.setSize(size);
+          searchContainer.setEpsilon(0.1);
+          anng.search(searchContainer);
+          for (const auto &result : results) {
+            clusterIds[std::distance(seedNodes.begin(), it)].emplace_back(result);
+            isClustered[result.id] = true;
+          }
+#ifdef NGT_SHARED_MEMORY_ALLOCATOR
+          anng.getObjectSpace().deleteObject(optr);
+#endif
+        }
+      }
+    }
+    for (auto &cluster : clusterIds) {
+      std::cerr << "Cluster size=" << cluster.size() << std::endl;
+    }
+    std::cerr << "Cluster IDs collected." << std::endl;
+    size_t nOfAddedObjects = 0;
+    for (size_t nodeId = 1; nodeId < repositorySize; nodeId++) {
+      if (isClustered[nodeId]) {
+        continue;
+      }
+#ifdef NGT_SHARED_MEMORY_ALLOCATOR
+      NGT::Object *optr =
+          anng.getObjectSpace().allocateObject(*anng.getObjectSpace().getRepository().get(nodeId));
+      NGT::Object &queryObject = *optr;
+#else
+      NGT::Object &queryObject = *anng.getObjectSpace().getRepository().get(nodeId);
+#endif
+      float minDistance          = std::numeric_limits<float>::max();
+      size_t closestClusterIndex = 0;
+      for (size_t j = 0; j < seedNodes.size(); j++) {
+        const auto &seedNodeId = seedNodes[j];
+        float distance         = objectSpace.getComparator()(queryObject, *objectRepository.get(seedNodeId));
+        if (distance < minDistance) {
+          minDistance         = distance;
+          closestClusterIndex = j;
+        }
+      }
+#ifdef NGT_SHARED_MEMORY_ALLOCATOR
+      anng.getObjectSpace().deleteObject(optr);
+#endif
+      clusterIds[closestClusterIndex].emplace_back(nodeId, minDistance);
+      nOfAddedObjects++;
+      isClustered[nodeId] = true;
+      std::cerr << "Node " << nodeId << " added to cluster of seed node " << seedNodes[closestClusterIndex]
+                << " with distance " << minDistance << std::endl;
+    }
+    std::cerr << "Total nodes added to clusters: " << nOfAddedObjects << std::endl;
+
+    std::cerr << "objectrepository size: " << repositorySize << ":" << objectRepository.size() << std::endl;
+    for (size_t nodeId = repositorySize - 1; nodeId > 0; nodeId--) {
+      if (objectRepository.isEmpty(nodeId)) {
+        continue;
+      }
+      try {
+        NGT::ObjectDistances empty;
+        graphIndex.repository.insert(nodeId, empty);
+      } catch (NGT::Exception &err) {
+        std::cerr << "Error adding object " << nodeId << ": " << err.what() << std::endl;
+        continue;
+      }
+      if (nodeId % 10000 == 0) {
+        std::cerr << "Added object " << nodeId << " to graph repository." << std::endl;
+      }
+    }
+    std::cerr << "All objects added to graph." << std::endl;
+
+#pragma omp parallel for
+    for (size_t seedidx = 0; seedidx < seedNodes.size(); seedidx++) {
+      if (clusterIds[seedidx].empty()) {
+        std::cerr << "Warning! No cluster members found for seed node " << seedNodes[seedidx] << std::endl;
+        continue;
+      }
+      {
+        std::sort(clusterIds[seedidx].begin(), clusterIds[seedidx].end());
+      }
+    }
+#define ADD_EDGE_PARALLEL_WITH_PARTIAL_MULTI_THREADS
+#if defined(ADD_EDGE_LINEAR)
+    for (size_t seedidx = 0; seedidx < seedNodes.size(); seedidx++) {
+      std::cerr << "seedNode[" << seedidx << "] " << seedNodes[seedidx] << " has "
+                << clusterIds[seedidx].size() << " cluster members." << std::endl;
+      std::cerr << clusterIds[seedidx][0] << std::endl;
+      if (seedNodes[seedidx] != clusterIds[seedidx][0].id) {
+        std::cerr << "Seed node is not the first in its cluster, adding it now." << std::endl;
+      }
+      size_t count = 0;
+      for (const auto &clusterNode : clusterIds[seedidx]) {
+        if (objectRepository.isEmpty(clusterNode.id)) {
+          std::cerr << "Warning! Cluster member " << clusterNode.id << " is empty, skipping." << std::endl;
+          continue;
+        }
+        NGT::Object &queryObject = *objectRepository.get(clusterNode.id);
+        NGT::ObjectDistances results;
+        NGT::SearchContainer searchContainer(queryObject);
+        searchContainer.setResults(&results);
+        searchContainer.setSize(std::max(incomingEdge, outgoingEdge) + 1);
+        searchContainer.setEdgeSize(0);
+        searchContainer.setEpsilon(epsilon);
+        NGT::ObjectDistances seeds;
+        seeds.emplace_back(clusterIds[seedidx][0]);
+        index.search(searchContainer, seeds);
+        size_t edgeCount = 0;
+        for (size_t idx = 0; idx < results.size(); idx++) {
+          const auto &result = results[idx];
+          if (result.id == clusterNode.id) {
+            continue;
+          }
+          try {
+            if (edgeCount < incomingEdge) {
+              graphIndex.addEdge(result.id, clusterNode.id, result.distance, false);
+            }
+            if (edgeCount < outgoingEdge) {
+              graphIndex.addEdge(clusterNode.id, result.id, result.distance, false);
+            }
+          } catch (...) {
+          }
+          edgeCount++;
+        }
+      }
+    }
+#elif defined(ADD_EDGE_PARALLEL)
+    bool done = false;
+    for (size_t idx = 0; !done; idx++) {
+      done = true;
+      for (size_t seedidx = 0; seedidx < seedNodes.size(); seedidx++) {
+        if (idx >= clusterIds[seedidx].size()) {
+          continue;
+        }
+        done = false;
+        std::cerr << clusterIds[seedidx][idx] << std::endl;
+        const auto &clusterNode = clusterIds[seedidx][idx];
+        if (seedNodes[seedidx] != clusterIds[seedidx][0].id) {
+          std::cerr << "Seed node is not the first in its cluster, adding it now." << std::endl;
+        }
+        if (objectRepository.isEmpty(clusterNode.id)) {
+          std::cerr << "Warning! Cluster member " << clusterNode.id << " is empty, skipping." << std::endl;
+          continue;
+        }
+        NGT::Object &queryObject = *objectRepository.get(clusterNode.id);
+        NGT::ObjectDistances results;
+        NGT::SearchContainer searchContainer(queryObject);
+        searchContainer.setResults(&results);
+        searchContainer.setSize(std::max(incomingEdge, outgoingEdge) + 1);
+        searchContainer.setEdgeSize(0);
+        searchContainer.setEpsilon(epsilon);
+        NGT::ObjectDistances seeds;
+        seeds.emplace_back(clusterIds[seedidx][0]);
+        index.search(searchContainer, seeds);
+        size_t edgeCount = 0;
+
+        for (size_t ridx = 0; ridx < results.size(); ridx++) {
+          const auto &result = results[ridx];
+          if (result.id == clusterNode.id) {
+            continue;
+          }
+          try {
+            if (edgeCount < incomingEdge) {
+              graphIndex.addEdge(result.id, clusterNode.id, result.distance, false);
+            }
+            if (edgeCount < outgoingEdge) {
+              graphIndex.addEdge(clusterNode.id, result.id, result.distance, false);
+            }
+          } catch (...) {
+          }
+          edgeCount++;
+        }
+      }
+    }
+#elif defined(ADD_EDGE_PARALLEL_WITH_MULTI_THREADS)
+    bool done = false;
+    for (size_t idx = 0; !done; idx++) {
+      done = true;
+      std::vector<std::vector<std::tuple<NGT::ObjectID, NGT::ObjectID, float>>> edges(seedNodes.size());
+#pragma omp parallel for
+      for (size_t seedidx = 0; seedidx < seedNodes.size(); seedidx++) {
+        if (idx >= clusterIds[seedidx].size()) {
+          continue;
+        }
+        done                    = false;
+        const auto &clusterNode = clusterIds[seedidx][idx];
+        if (seedNodes[seedidx] != clusterIds[seedidx][0].id) {
+          std::cerr << "Seed node is not the first in its cluster, adding it now." << std::endl;
+        }
+        if (objectRepository.isEmpty(clusterNode.id)) {
+          std::cerr << "Warning! Cluster member " << clusterNode.id << " is empty, skipping." << std::endl;
+          continue;
+        }
+        NGT::Object &queryObject = *objectRepository.get(clusterNode.id);
+        NGT::ObjectDistances results;
+        NGT::SearchContainer searchContainer(queryObject);
+        searchContainer.setResults(&results);
+        searchContainer.setSize(std::max(incomingEdge, outgoingEdge) + 1);
+        searchContainer.setEdgeSize(0);
+        searchContainer.setEpsilon(epsilon);
+        NGT::ObjectDistances seeds;
+        seeds.emplace_back(clusterIds[seedidx][0]);
+        index.search(searchContainer, seeds);
+        size_t edgeCount = 0;
+        // Add edges from seed node to each cluster member
+
+        for (size_t ridx = 0; ridx < results.size(); ridx++) {
+          const auto &result = results[ridx];
+          if (result.id == clusterNode.id) {
+            continue;
+          }
+          if (edgeCount < incomingEdge) {
+            edges[seedidx].emplace_back(result.id, clusterNode.id, result.distance);
+          }
+          if (edgeCount < outgoingEdge) {
+            edges[seedidx].emplace_back(clusterNode.id, result.id, result.distance);
+          }
+          edgeCount++;
+        }
+      }
+      for (size_t seedidx = 0; seedidx < seedNodes.size(); seedidx++) {
+        for (const auto &edge : edges[seedidx]) {
+          try {
+            graphIndex.addEdge(std::get<0>(edge), std::get<1>(edge), std::get<2>(edge), false);
+          } catch (...) {
+          }
+        }
+      }
+    }
+#elif defined(ADD_EDGE_PARALLEL_WITH_PARTIAL_MULTI_THREADS)
+    bool done        = false;
+    size_t batchSize = 8;
+    for (size_t idx = 0; !done; idx++) {
+      std::cerr << "Processing the rank=" << idx << std::endl;
+      done = true;
+      std::vector<size_t> seedidxes;
+      seedidxes.reserve(batchSize);
+      for (size_t sidx = 0;; sidx++) {
+        if (seedidxes.size() >= batchSize || sidx >= seedNodes.size()) {
+          std::vector<std::vector<std::tuple<NGT::ObjectID, NGT::ObjectID, float>>> edges(seedidxes.size());
+#pragma omp parallel for
+          for (size_t seedidxesidx = 0; seedidxesidx < seedidxes.size(); seedidxesidx++) {
+            size_t seedidx = seedidxes[seedidxesidx];
+            if (seedidx >= seedNodes.size()) {
+              continue;
+            }
+            if (idx >= clusterIds[seedidx].size()) {
+              continue;
+            }
+            done                    = false;
+            const auto &clusterNode = clusterIds[seedidx][idx];
+            if (seedNodes[seedidx] != clusterIds[seedidx][0].id) {
+              std::cerr << "Seed node is not the first in its cluster, adding it now." << std::endl;
+            }
+            if (objectRepository.isEmpty(clusterNode.id)) {
+              std::cerr << "Warning! Cluster member " << clusterNode.id << " is empty, skipping."
+                        << std::endl;
+              continue;
+            }
+#ifdef NGT_SHARED_MEMORY_ALLOCATOR
+            NGT::Object *optr = anng.getObjectSpace().allocateObject(
+                *anng.getObjectSpace().getRepository().get(clusterNode.id));
+            NGT::Object &queryObject = *optr;
+#else
+            NGT::Object &queryObject = *objectRepository.get(clusterNode.id);
+#endif
+            NGT::ObjectDistances results;
+            NGT::SearchContainer searchContainer(queryObject);
+            searchContainer.setResults(&results);
+            searchContainer.setSize(std::max(incomingEdge, outgoingEdge) + 1);
+            searchContainer.setEdgeSize(0);
+            searchContainer.setEpsilon(epsilon);
+            NGT::ObjectDistances seeds;
+            seeds.emplace_back(clusterIds[seedidx][0]);
+            index.search(searchContainer, seeds);
+            size_t edgeCount = 0;
+            for (size_t ridx = 0; ridx < results.size(); ridx++) {
+              const auto &result = results[ridx];
+              if (result.id == clusterNode.id) {
+                continue;
+              }
+              if (edgeCount < incomingEdge) {
+                edges[seedidxesidx].emplace_back(result.id, clusterNode.id, result.distance);
+              }
+              if (edgeCount < outgoingEdge) {
+                edges[seedidxesidx].emplace_back(clusterNode.id, result.id, result.distance);
+              }
+              edgeCount++;
+            }
+#ifdef NGT_SHARED_MEMORY_ALLOCATOR
+            anng.getObjectSpace().deleteObject(optr);
+#endif
+          }
+          for (auto &sdedge : edges) {
+            for (const auto &edge : sdedge) {
+              try {
+                graphIndex.addEdge(std::get<0>(edge), std::get<1>(edge), std::get<2>(edge), false);
+              } catch (...) {
+              }
+            }
+          }
+          seedidxes.clear();
+          if (sidx >= seedNodes.size()) {
+            break;
+          }
+        }
+        if (idx >= clusterIds[sidx].size()) {
+          continue;
+        }
+        seedidxes.emplace_back(sidx);
+      }
+    }
+#elif defined(ADD_EDGE_PARALLEL_WITH_EXTRA_EDGES)
+    bool done = false;
+    for (size_t idx = 0; !done; idx++) {
+      done = true;
+      for (size_t seedidx = 0; seedidx < seedNodes.size(); seedidx++) {
+        if (idx >= clusterIds[seedidx].size()) {
+          continue;
+        }
+        done = false;
+        std::cerr << clusterIds[seedidx][idx] << std::endl;
+        const auto &clusterNode = clusterIds[seedidx][idx];
+        if (seedNodes[seedidx] != clusterIds[seedidx][0].id) {
+          std::cerr << "Seed node is not the first in its cluster, adding it now." << std::endl;
+        }
+        if (objectRepository.isEmpty(clusterNode.id)) {
+          std::cerr << "Warning! Cluster member " << clusterNode.id << " is empty, skipping." << std::endl;
+          continue; // Skip if the cluster member is empty
+        }
+        NGT::ObjectDistances resultsFine;
+        {
+          NGT::Object &queryObject = *objectRepository.get(clusterNode.id);
+          NGT::SearchContainer searchContainer(queryObject);
+          searchContainer.setResults(&resultsFine);
+          searchContainer.setSize(std::max(incomingEdge, outgoingEdge) + 1);
+          searchContainer.setEdgeSize(0);
+          searchContainer.setEpsilon(epsilon);
+          NGT::ObjectDistances seeds;
+          seeds.emplace_back(clusterIds[seedidx][0]);
+          index.search(searchContainer, seeds);
+        }
+        NGT::ObjectDistances results;
+        NGT::Object &queryObject = *objectRepository.get(clusterNode.id);
+        NGT::SearchContainer searchContainer(queryObject);
+        searchContainer.setResults(&results);
+        searchContainer.setSize(std::max(incomingEdge, outgoingEdge) + 1);
+        searchContainer.setEdgeSize(0);
+        searchContainer.setEpsilon(0.0);
+        NGT::ObjectDistances seeds;
+        seeds.emplace_back(clusterIds[seedidx][0]);
+        index.search(searchContainer, seeds);
+        for (size_t rf = 0; rf < resultsFine.size(); rf++) {
+          bool found = false;
+          for (size_t r = 0; r < results.size(); r++) {
+            if (resultsFine[rf].id == results[r].id) {
+              found = true;
+              break;
+            }
+          }
+          if (!found) {
+            std::cerr << "Warning! Fine result " << resultsFine[rf].id << " is not in zero-epsilon result."
+                      << std::endl;
+          }
+        }
+
+        size_t edgeCount = 0;
+        for (size_t ridx = 0; ridx < results.size(); ridx++) {
+          const auto &result = results[ridx];
+          if (result.id == clusterNode.id) {
+            continue;
+          }
+          try {
+            if (edgeCount < incomingEdge) {
+              graphIndex.addEdge(result.id, clusterNode.id, result.distance, false);
+            }
+            if (edgeCount < outgoingEdge) {
+              graphIndex.addEdge(clusterNode.id, result.id, result.distance, false);
+            }
+          } catch (...) {
+          }
+          edgeCount++;
+        }
+      }
+    }
+#else
+    for (size_t seedidx = 0; seedidx < seedNodes.size(); seedidx++) {
+      if (seedNodes[seedidx] != clusterIds[seedidx][0].id) {
+        std::cerr << "Seed node is not the first in its cluster, adding it now." << std::endl;
+      }
+      NGT::GraphIndex tmpGraph(indexPath, false, NGT::Index::OpenTypeObjectDisabled);
+      tmpGraph.objectSpace = graphIndex.objectSpace;
+      for (const auto &clusterNode : clusterIds[seedidx]) {
+        if (objectRepository.isEmpty(clusterNode.id)) {
+          std::cerr << "Warning! Cluster member " << clusterNode.id << " is empty, skipping." << std::endl;
+          continue;
+        }
+        try {
+          NGT::ObjectDistances empty;
+          tmpGraph.repository.insert(clusterNode.id, empty);
+        } catch (NGT::Exception &err) {
+          std::cerr << "Error adding object " << clusterNode.id << ": " << err.what() << std::endl;
+          continue;
+        }
+        std::cerr << "repository size=" << tmpGraph.repository.size() << std::endl;
+        if (tmpGraph.repository.size() <= 1) {
+          continue;
+        }
+        NGT::Object &queryObject = *objectRepository.get(clusterNode.id);
+        NGT::ObjectDistances results;
+        NGT::SearchContainer searchContainer(queryObject);
+        searchContainer.setResults(&results);
+        searchContainer.setSize(std::max(incomingEdge, outgoingEdge) + 1);
+        searchContainer.setEdgeSize(0);
+        searchContainer.setEpsilon(epsilon);
+        NGT::ObjectDistances seeds;
+        seeds.emplace_back(clusterIds[seedidx][0]);
+        tmpGraph.search(searchContainer, seeds);
+        std::cerr << "Search results for cluster member " << clusterNode.id << ": " << results.size()
+                  << " results found." << std::endl;
+        size_t edgeCount = 0;
+        for (size_t idx = 0; idx < results.size(); idx++) {
+          const auto &result = results[idx];
+          if (result.id == clusterNode.id) {
+            continue;
+          }
+          try {
+            if (edgeCount < incomingEdge) {
+              tmpGraph.addEdge(result.id, clusterNode.id, result.distance, false);
+            }
+            if (edgeCount < outgoingEdge) {
+              tmpGraph.addEdge(clusterNode.id, result.id, result.distance, false);
+            }
+          } catch (...) {
+          }
+          edgeCount++;
+        }
+      }
+      tmpGraph.objectSpace = 0;
+    }
+#endif
+    index.save();
+  } catch (NGT::Exception &err) {
+    std::stringstream msg;
+    msg << "Error " << err.what() << std::endl;
+    msg << usage << std::endl;
+    NGTThrowException(msg);
+  } catch (...) {
+    std::stringstream msg;
+    msg << "Error" << std::endl;
+    msg << usage << std::endl;
+    NGTThrowException(msg);
+  }
+}
+#endif
 
 void NGT::Command::optimizeNumberOfEdgesForANNG(Args &args) {
   const string usage =

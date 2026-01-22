@@ -18,11 +18,27 @@
 
 #include "NGT/Tree.h"
 #include "NGT/Node.h"
+#include "NGT/Index.h"
 
 #include <vector>
 
 using namespace std;
 using namespace NGT;
+
+DVPTree::DVPTree() {
+  NGT::Property prop;
+  initialize(prop);
+}
+DVPTree::DVPTree(NGT::Property &prop) { initialize(prop); }
+
+void DVPTree::initialize(NGT::Property &prop) {
+  leafObjectsSize      = prop.leafNodeSize;
+  internalChildrenSize = prop.internalChildrenSize;
+  splitMode            = MaxVariance;
+#ifndef NGT_SHARED_MEMORY_ALLOCATOR
+  insertNode(allocateLeafNode());
+#endif
+}
 
 void DVPTree::insert(InsertContainer &iobj) {
   SearchContainer q(iobj.object);
@@ -134,11 +150,11 @@ Node::ID DVPTree::recombineNodes(InsertContainer &ic, Node::Objects &fs, LeafNod
   ln[0]->objectSize     = 0;
 #ifdef NGT_SHARED_MEMORY_ALLOCATOR
   for (size_t i = 1; i < internalChildrenSize; i++) {
-    ln[i] = new (leafNodes.allocator) LeafNode(leafNodes.allocator);
+    ln[i] = allocateLeafNode();
   }
 #else
   for (size_t i = 1; i < internalChildrenSize; i++) {
-    ln[i] = new LeafNode;
+    ln[i] = allocateLeafNode();
   }
 #endif
   InternalNode *in = createInternalNode();
@@ -367,9 +383,9 @@ void DVPTree::removeEmptyNodes(InternalNode &inode) {
     if (target->parent.getID() == 0) {
       removeNode(target->id);
 #ifdef NGT_SHARED_MEMORY_ALLOCATOR
-      LeafNode *root = new (leafNodes.allocator) LeafNode(leafNodes.allocator);
+      LeafNode *root = allocateLeafNode();
 #else
-      LeafNode *root = new LeafNode;
+      LeafNode *root = allocateLeafNode();
 #endif
       insertNode(root);
       if (root->id.getID() != 1) {
@@ -379,9 +395,9 @@ void DVPTree::removeEmptyNodes(InternalNode &inode) {
     }
 
 #ifdef NGT_SHARED_MEMORY_ALLOCATOR
-    LeafNode *ln = new (leafNodes.allocator) LeafNode(leafNodes.allocator);
+    LeafNode *ln = allocateLeafNode();
 #else
-    LeafNode *ln = new LeafNode;
+    LeafNode *ln = allocateLeafNode();
 #endif
     ln->parent = target->parent;
     ln->pivot  = PersistentObject::allocate(*objectSpace);

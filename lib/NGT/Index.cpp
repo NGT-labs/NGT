@@ -92,7 +92,7 @@ void NGT::Index::open(const string &database, bool rdOnly, NGT::Index::OpenType 
   Index *idx = 0;
   if ((prop.indexType == NGT::Index::Property::GraphAndTree) &&
       ((openType & NGT::Index::OpenTypeGraphDisabled) == 0)) {
-    idx = new NGT::GraphAndTreeIndex(database, rdOnly);
+    idx = new NGT::GraphAndTreeIndex(database, prop, rdOnly);
   } else if ((prop.indexType == NGT::Index::Property::Graph) ||
              ((openType & NGT::Index::OpenTypeGraphDisabled) != 0)) {
 #ifdef NGT_SHARED_MEMORY_ALLOCATOR
@@ -120,11 +120,11 @@ void NGT::Index::createGraphAndTree(const string &database, NGT::Property &prop,
   prop.indexType = NGT::Index::Property::IndexType::GraphAndTree;
   Index *idx     = 0;
 #ifdef NGT_SHARED_MEMORY_ALLOCATOR
-  mkdir(database);
-  idx = new NGT::GraphAndTreeIndex(database, prop);
+  idx = new NGT::Index(prop, database);
 #else
-  idx = new NGT::GraphAndTreeIndex(prop);
+  idx = new NGT::Index(prop);
 #endif
+  idx->redirect = redirect;
   assert(idx != 0);
   StdOstreamRedirector redirector(redirect);
   redirector.begin();
@@ -149,6 +149,35 @@ void NGT::Index::createGraphAndTree(const string &database, NGT::Property &prop,
   redirector.end();
 }
 
+void NGT::Index::create(const string &indexPath, const string &srcIndex, NGT::Property *updateProp,
+                        bool redirect) {
+  StdOstreamRedirector redirector(redirect);
+  redirector.begin();
+  NGT::Property prop;
+  prop.load(srcIndex);
+  if (prop.dimension == 0) {
+    NGTThrowException("Index::createGraphAndTree. Dimension is not specified.");
+  }
+  if (updateProp != nullptr) {
+    prop.set(*updateProp);
+  }
+  try {
+#ifdef NGT_SHARED_MEMORY_ALLOCATOR
+    mkdir(indexPath);
+    NGT::GraphAndTreeIndex index(indexPath, prop);
+#else
+    NGT::GraphAndTreeIndex index(prop);
+#endif
+#ifndef NGT_SHARED_MEMORY_ALLOCATOR
+    index.save(indexPath);
+#endif
+    index.close();
+  } catch (Exception &err) {
+    redirector.end();
+    throw err;
+  }
+}
+
 void NGT::Index::createGraph(const string &database, NGT::Property &prop, const string &dataFile,
                              size_t dataSize, bool redirect) {
   if (prop.dimension == 0) {
@@ -157,11 +186,11 @@ void NGT::Index::createGraph(const string &database, NGT::Property &prop, const 
   prop.indexType = NGT::Index::Property::IndexType::Graph;
   Index *idx     = 0;
 #ifdef NGT_SHARED_MEMORY_ALLOCATOR
-  mkdir(database);
-  idx = new NGT::GraphIndex(database, prop);
+  idx = new NGT::Index(prop, database);
 #else
-  idx = new NGT::GraphIndex(prop);
+  idx = new NGT::Index(prop);
 #endif
+  idx->redirect = redirect;
   assert(idx != 0);
   StdOstreamRedirector redirector(redirect);
   redirector.begin();
@@ -972,6 +1001,8 @@ void NGT::Index::Property::set(NGT::Property &prop) {
   if (prop.nOfNeighborsForInsertionOrder != -1)
     nOfNeighborsForInsertionOrder = prop.nOfNeighborsForInsertionOrder;
   if (prop.epsilonForInsertionOrder != -1) epsilonForInsertionOrder = prop.epsilonForInsertionOrder;
+  if (prop.leafNodeSize != -1) leafNodeSize = prop.leafNodeSize;
+  if (prop.internalChildrenSize != -1) internalChildrenSize = prop.internalChildrenSize;
 }
 
 void NGT::Index::Property::get(NGT::Property &prop) {
@@ -999,6 +1030,8 @@ void NGT::Index::Property::get(NGT::Property &prop) {
   prop.clippingRate                  = clippingRate;
   prop.nOfNeighborsForInsertionOrder = nOfNeighborsForInsertionOrder;
   prop.epsilonForInsertionOrder      = epsilonForInsertionOrder;
+  prop.leafNodeSize                  = leafNodeSize;
+  prop.internalChildrenSize          = internalChildrenSize;
 }
 
 class CreateIndexJob {
@@ -1249,7 +1282,7 @@ NGT::GraphIndex::GraphIndex(const string &allocator, bool rdonly) : readOnly(rdo
 }
 
 NGT::GraphAndTreeIndex::GraphAndTreeIndex(const string &allocator, NGT::Property &prop)
-    : GraphIndex(allocator, prop) {
+    : GraphIndex(allocator, prop), DVPTree(prop) {
   initialize(allocator, prop.treeSharedMemorySize);
 }
 

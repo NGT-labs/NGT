@@ -2339,8 +2339,8 @@ class Index : public NGTQ::Index {
 
 #ifdef NGTQ_OBGRAPH
     static void constructONNGForSetBlobID(size_t outEdge, size_t inEdge, size_t inRank,
-                                          std::vector<NGT::ObjectDistances> & results,
-                                          std::vector<std::vector<NGT::ObjectID>> & edges);
+                                          std::vector<NGT::ObjectDistances> &results,
+                                          std::vector<std::vector<NGT::ObjectID>> &edges);
     static void constructExperimentalGraphForSetBlobID(vector<NGT::ObjectDistances> & results, size_t outEdge,
                                                        float threshold,
                                                        std::vector<std::vector<NGT::ObjectID>> &edges);
@@ -2349,7 +2349,7 @@ class Index : public NGTQ::Index {
     static void extractEdgesFromGraph(std::string & ngtPath, std::vector<std::vector<NGT::ObjectID>> & edges);
 
     static void extractEdgesBySearch(QBG::Index & index, std::vector<NGT::ObjectDistances> & results,
-                                     size_t outEdge, size_t inEdge, QBG::SearchContainer & sc);
+                                     size_t outEdge, size_t inEdge, QBG::SearchContainer &sc);
 
     static void setBlobIDsFromGraph(std::string & indexPath, std::string & ngtPath,
                                     NGTQ::DataType refinementDataType) {

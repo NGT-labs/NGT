@@ -72,6 +72,7 @@ class PersistentObjectDistances;
 class ObjectDistances : public std::vector<ObjectDistance> {
  public:
   ObjectDistances(NGT::ObjectSpace *os = 0) {}
+  ObjectDistances(ObjectDistance *begin, ObjectDistance *end) : std::vector<ObjectDistance>(begin, end) {}
   void serialize(std::ofstream &os, ObjectSpace *objspace = 0) {
     NGT::Serializer::write(os, (std::vector<ObjectDistance> &)*this);
   }

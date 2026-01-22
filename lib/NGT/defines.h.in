@@ -30,6 +30,7 @@
 #cmakedefine NGT_BFLOAT_ENABLED
 #cmakedefine NGT_GRAPH_COMPACT_READ_ONLY_GRAPH
 #cmakedefine NGT_ENABLE_TIME_SEED_FOR_RANDOM
+#cmakedefine NGT_FOREST
 #cmakedefine NGTQ_OBGRAPH
 // End of cmake defines
 

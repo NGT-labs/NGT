@@ -387,25 +387,27 @@ class InternalNode : public Node {
 class LeafNode : public Node {
  public:
 #if defined(NGT_SHARED_MEMORY_ALLOCATOR)
-  LeafNode(SharedMemoryAllocator &allocator, NGT::ObjectSpace *os = 0) {
+  LeafNode(size_t nOfObjects, SharedMemoryAllocator &allocator, NGT::ObjectSpace *os = 0) {
 #else
-  LeafNode(NGT::ObjectSpace *os = 0) {
+  LeafNode(size_t nOfObjects, NGT::ObjectSpace *os = 0) {
 #endif
     id = 0;
     id.setType(ID::Leaf);
     pivot = 0;
 #ifdef NGT_NODE_USE_VECTOR
-    objectIDs.reserve(LeafObjectsSizeMax);
+    objectIDs.reserve(nOfObjects);
 #else
     objectSize = 0;
 #ifdef NGT_SHARED_MEMORY_ALLOCATOR
-    objectIDs = allocator.getOffset(new (allocator) Object[LeafObjectsSizeMax]);
+    objectIDs = allocator.getOffset(new (allocator) Object[nOfObjects]);
 #else
-    objectIDs = new NGT::ObjectDistance[LeafObjectsSizeMax];
+    objectIDs = new NGT::ObjectDistance[nOfObjects];
 #endif
 #endif
   }
-
+#if defined(NGT_SHARED_MEMORY_ALLOCATOR)
+#else
+#endif
   ~LeafNode() {
 #ifndef NGT_SHARED_MEMORY_ALLOCATOR
 #ifndef NGT_NODE_USE_VECTOR

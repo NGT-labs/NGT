@@ -89,6 +89,8 @@ class Index {
       clippingRate                  = 0.0;
       nOfNeighborsForInsertionOrder = 0;
       epsilonForInsertionOrder      = 0.1;
+      leafNodeSize                  = NGT::LeafNode::LeafObjectsSizeMax;
+      internalChildrenSize          = NGT::InternalNode::InternalChildrenSizeMax;
     }
     void clear() {
       dimension      = -1;
@@ -116,6 +118,8 @@ class Index {
       clippingRate                  = -1.0;
       nOfNeighborsForInsertionOrder = -1;
       epsilonForInsertionOrder      = -1;
+      leafNodeSize                  = -1;
+      internalChildrenSize          = -1;
     }
 
     void exportProperty(NGT::PropertySet &p) {
@@ -199,6 +203,8 @@ class Index {
       p.set("QuantizationClippingRate", clippingRate);
       p.set("NumberOfNeighborsForInsertionOrder", nOfNeighborsForInsertionOrder);
       p.set("EpsilonForInsertionOrder", epsilonForInsertionOrder);
+      p.set("LeafNodeSize", leafNodeSize);
+      p.set("InternalChildrenSize", internalChildrenSize);
     }
 
     void importProperty(NGT::PropertySet &p) {
@@ -357,6 +363,8 @@ class Index {
       nOfNeighborsForInsertionOrder =
           p.getl("NumberOfNeighborsForInsertionOrder", nOfNeighborsForInsertionOrder);
       epsilonForInsertionOrder = p.getf("EpsilonForInsertionOrder", epsilonForInsertionOrder);
+      leafNodeSize             = p.getl("LeafNodeSize", leafNodeSize);
+      internalChildrenSize     = p.getl("InternalChildrenSize", internalChildrenSize);
     }
 
     void set(NGT::Property &prop);
@@ -387,6 +395,8 @@ class Index {
 #ifdef NGT_REFINEMENT
     ObjectSpace::ObjectType refinementObjectType;
 #endif
+    int leafNodeSize;
+    int internalChildrenSize;
   };
 
   class InsertionOrder : public std::vector<uint32_t> {
@@ -485,7 +495,7 @@ class Index {
     std::vector<std::pair<float, double>> table;
   };
 
-  Index() : index(0) {
+  Index() : index(0), redirect(false) {
 #if defined(NGT_AVX2)
     if (!CpuInfo::isAVX2()) {
       std::stringstream msg;
@@ -554,6 +564,15 @@ class Index {
                                  const std::string &dataFile, size_t dataSize = 0, bool redirect = false);
   static void createGraphAndTree(const std::string &database, NGT::Property &prop, bool redirect = false) {
     createGraphAndTree(database, prop, "", redirect);
+  }
+  static void create(const std::string &index, const std::string &srcIndex, NGT::Property *updateProp,
+                     bool redirect = false);
+  static void create(const std::string &index, const std::string &srcIndex, bool redirect = false) {
+    create(index, srcIndex, nullptr, redirect);
+  }
+  static void create(const std::string &index, const std::string &srcIndex, NGT::Property &updateProp,
+                     bool redirect = false) {
+    create(index, srcIndex, &updateProp, redirect);
   }
   static void createGraph(const std::string &database, NGT::Property &prop, const std::string &dataFile,
                           size_t dataSize = 0, bool redirect = false);
@@ -1678,7 +1697,6 @@ class GraphIndex : public Index, public NeighborhoodGraph {
     }
   }
 
- protected:
   // GraphIndex
   virtual void search(NGT::SearchContainer &sc, ObjectDistances &seeds) {
     if (sc.size == 0) {
@@ -1731,7 +1749,8 @@ class GraphIndex : public Index, public NeighborhoodGraph {
 class GraphAndTreeIndex : public GraphIndex, public DVPTree {
  public:
 #ifdef NGT_SHARED_MEMORY_ALLOCATOR
-  GraphAndTreeIndex(const std::string &allocator, bool rdOnly = false) : GraphIndex(allocator, false) {
+  GraphAndTreeIndex(const std::string &allocator, NGT::Property &prop, bool rdOnly)
+      : GraphIndex(allocator, rdOnly), DVPTree(prop) {
     initialize(allocator, 0);
   }
   GraphAndTreeIndex(const std::string &allocator, NGT::Property &prop);
@@ -1740,11 +1759,12 @@ class GraphAndTreeIndex : public GraphIndex, public DVPTree {
     DVPTree::open(allocator + "/tre", sharedMemorySize);
   }
 #else
-  GraphAndTreeIndex(const std::string &database, bool rdOnly = false) : GraphIndex(database, rdOnly) {
+  GraphAndTreeIndex(const std::string &database, NGT::Property &prop, bool rdOnly = false)
+      : GraphIndex(database, rdOnly), DVPTree(prop) {
     GraphAndTreeIndex::loadIndex(database, rdOnly);
   }
 
-  GraphAndTreeIndex(NGT::Property &prop) : GraphIndex(prop) {
+  GraphAndTreeIndex(NGT::Property &prop) : GraphIndex(prop), DVPTree(prop) {
     DVPTree::objectSpace = GraphIndex::objectSpace;
   }
 #endif
@@ -1901,7 +1921,6 @@ class GraphAndTreeIndex : public GraphIndex, public DVPTree {
   void clearIndex() {
     GraphIndex::clearIndex();
     DVPTree::deleteAll();
-    DVPTree::initialize();
   }
 
   void exportIndex(const std::string &ofile) {
@@ -2184,7 +2203,6 @@ class GraphAndTreeIndex : public GraphIndex, public DVPTree {
       msg << "GraphAndTreeIndex::getSeeds: Cannot search for tree.:" << err.what();
       NGTThrowException(msg);
     }
-
     try {
       DVPTree::getObjectIDsFromLeaf(tso.nodeID, seeds);
     } catch (Exception &err) {

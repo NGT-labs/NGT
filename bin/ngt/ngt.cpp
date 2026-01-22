@@ -105,6 +105,10 @@ int main(int argc, char **argv) {
       ngt.rebuild(args);
     } else if (command == "prep-pq") {
       ngt.preprocessForPQ(args);
+#ifdef NGT_FOREST
+    } else if (command == "construct-forest") {
+      ngt.constructForestGraph(args);
+#endif
 #ifndef NGT_SHARED_MEMORY_ALLOCATOR
     } else if (command == "extract-query") {
       NGT::Optimizer::extractQueries(args);

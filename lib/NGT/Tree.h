@@ -27,6 +27,187 @@
 #include <unordered_map>
 
 namespace NGT {
+class Property;
+
+#ifdef NGT_SHARED_MEMORY_ALLOCATOR
+template <class TYPE> class TreeNodes : public PersistentRepository<TYPE> {
+ public:
+  void deserialize(std::ifstream &is, size_t nOfObjects, ObjectSpace *objectspace = 0) {
+    if (!is.is_open()) {
+      NGTThrowException("NGT::Common: Not open the specified stream yet.");
+    }
+    PersistentRepository<TYPE>::deleteAll();
+    (*this).push_back((TYPE *)0);
+    size_t s;
+    NGT::Serializer::read(is, s);
+    for (size_t i = 0; i < s; i++) {
+      char type;
+      NGT::Serializer::read(is, type);
+      switch (type) {
+      case '-': {
+        (*this).push_back((TYPE *)0);
+#ifdef ADVANCED_USE_REMOVED_LIST
+        if (i != 0) {
+          PersistentRepository<TYPE>::removedListPush(i);
+        }
+#endif
+      } break;
+      case '+': {
+        if (objectspace == 0) {
+          TYPE *v = new (PersistentRepository<TYPE>::allocator)
+              TYPE(nOfObjects, PersistentRepository<TYPE>::allocator);
+          //v->deserialize(is, allocator);
+          assert(0);
+          (*this).push_back(v);
+        } else {
+          TYPE *v = new (PersistentRepository<TYPE>::allocator)
+              TYPE(nOfObjects, PersistentRepository<TYPE>::allocator, objectspace);
+          //v->deserialize(is, allocator, objectspace);
+          assert(0);
+          (*this).push_back(v);
+        }
+      } break;
+      default: {
+        assert(type == '-' || type == '+');
+        break;
+      }
+      }
+    }
+  }
+  void deserializeAsText(std::ifstream &is, size_t nOfObjects, ObjectSpace *objectspace = 0) {
+    if (!is.is_open()) {
+      NGTThrowException("NGT::Common: Not open the specified stream yet.");
+    }
+    PersistentRepository<TYPE>::deleteAll();
+    size_t s;
+    NGT::Serializer::readAsText(is, s);
+    (*this).reserve(s);
+    for (size_t i = 0; i < s; i++) {
+      size_t idx;
+      NGT::Serializer::readAsText(is, idx);
+      if (i != idx) {
+        std::cerr << "PersistentRepository: Error. index of a specified import file is invalid. " << idx
+                  << ":" << i << std::endl;
+      }
+      char type;
+      NGT::Serializer::readAsText(is, type);
+      switch (type) {
+      case '-': {
+        (*this).push_back((TYPE *)0);
+#ifdef ADVANCED_USE_REMOVED_LIST
+        if (i != 0) {
+          PersistentRepository<TYPE>::removedListPush(i);
+        }
+#endif
+      } break;
+      case '+': {
+        if (objectspace == 0) {
+          TYPE *v = new (PersistentRepository<TYPE>::allocator)
+              TYPE(nOfObjects, PersistentRepository<TYPE>::allocator);
+          v->deserializeAsText(is, PersistentRepository<TYPE>::allocator);
+          (*this).push_back(v);
+        } else {
+          TYPE *v = new (PersistentRepository<TYPE>::allocator)
+              TYPE(nOfObjects, PersistentRepository<TYPE>::allocator, objectspace);
+          v->deserializeAsText(is, PersistentRepository<TYPE>::allocator, objectspace);
+          (*this).push_back(v);
+        }
+      } break;
+      default: {
+        assert(type == '-' || type == '+');
+        break;
+      }
+      }
+    }
+  }
+};
+#else
+template <class TYPE> class TreeNodes : public Repository<TYPE> {
+ public:
+  void deserialize(std::ifstream &is, size_t nOfObjects, ObjectSpace *objectspace = 0) {
+    if (!is.is_open()) {
+      NGTThrowException("NGT::Common: Not open the specified stream yet.");
+    }
+    Repository<TYPE>::deleteAll();
+    size_t s;
+    NGT::Serializer::read(is, s);
+    std::vector<TYPE *>::reserve(s);
+    for (size_t i = 0; i < s; i++) {
+      char type;
+      NGT::Serializer::read(is, type);
+      switch (type) {
+      case '-': {
+        std::vector<TYPE *>::push_back(0);
+#ifdef ADVANCED_USE_REMOVED_LIST
+        if (i != 0) {
+          Repository<TYPE>::removedList.push(i);
+        }
+#endif
+      } break;
+      case '+': {
+        if (objectspace == 0) {
+          TYPE *v = new TYPE(nOfObjects);
+          v->deserialize(is);
+          std::vector<TYPE *>::push_back(v);
+        } else {
+          TYPE *v = new TYPE(nOfObjects, objectspace);
+          v->deserialize(is, objectspace);
+          std::vector<TYPE *>::push_back(v);
+        }
+      } break;
+      default: {
+        assert(type == '-' || type == '+');
+        break;
+      }
+      }
+    }
+  }
+  void deserializeAsText(std::ifstream &is, size_t nOfObjects, ObjectSpace *objectspace = 0) {
+    if (!is.is_open()) {
+      NGTThrowException("NGT::Common: Not open the specified stream yet.");
+    }
+    Repository<TYPE>::deleteAll();
+    size_t s;
+    NGT::Serializer::readAsText(is, s);
+    std::vector<TYPE *>::reserve(s);
+    for (size_t i = 0; i < s; i++) {
+      size_t idx;
+      NGT::Serializer::readAsText(is, idx);
+      if (i != idx) {
+        std::cerr << "Repository: Error. index of a specified import file is invalid. " << idx << ":" << i
+                  << std::endl;
+      }
+      char type;
+      NGT::Serializer::readAsText(is, type);
+      switch (type) {
+      case '-': {
+        std::vector<TYPE *>::push_back(0);
+#ifdef ADVANCED_USE_REMOVED_LIST
+        if (i != 0) {
+          Repository<TYPE>::removedList.push(i);
+        }
+#endif
+      } break;
+      case '+': {
+        if (objectspace == 0) {
+          TYPE *v = new TYPE(nOfObjects);
+          v->deserializeAsText(is);
+          std::vector<TYPE *>::push_back(v);
+        } else {
+          TYPE *v = new TYPE(nOfObjects, objectspace);
+          v->deserializeAsText(is, objectspace);
+          std::vector<TYPE *>::push_back(v);
+        }
+      } break;
+      default: {
+        assert(type == '-' || type == '+');
+        break;
+      }
+      }
+    }
+  }
+};
+#endif
 
 class DVPTree {
 
@@ -63,7 +244,8 @@ class DVPTree {
     RemoveContainer(Object &f, ObjectID i) : Container(f, i) {}
   };
 
-  DVPTree() { initialize(); }
+  DVPTree();
+  DVPTree(Property &prop);
 
   virtual ~DVPTree() {
 #ifndef NGT_SHARED_MEMORY_ALLOCATOR
@@ -71,14 +253,7 @@ class DVPTree {
 #endif
   }
 
-  void initialize() {
-    leafObjectsSize      = LeafNode::LeafObjectsSizeMax;
-    internalChildrenSize = InternalNode::InternalChildrenSizeMax;
-    splitMode            = MaxVariance;
-#ifndef NGT_SHARED_MEMORY_ALLOCATOR
-    insertNode(new LeafNode);
-#endif
-  }
+  void initialize(Property &prop);
 
   void deleteAll() {
     for (size_t i = 0; i < leafNodes.size(); i++) {
@@ -114,8 +289,7 @@ class DVPTree {
       if (internalNodes.size() != 0) {
         NGTThrowException("Tree::Open: Internal error. Internal and leaf are inconsistent.");
       }
-      LeafNode *ln = leafNodes.allocate();
-      insertNode(ln);
+      insertNode(allocateLeafNode());
     }
   }
 #endif // NGT_SHARED_MEMORY_ALLOCATOR
@@ -215,6 +389,9 @@ class DVPTree {
   }
 
   Node *getRootNode() {
+    if (internalNodes.size() == 0 && leafNodes.size() == 0) {
+      NGTThrowException("DVPTree::getRootNode: Inner error. No leaf root node.");
+    }
     size_t nid = 1;
     Node *root;
     try {
@@ -224,7 +401,7 @@ class DVPTree {
         root = leafNodes.get(nid);
       } catch (Exception &e) {
         std::stringstream msg;
-        msg << "VpTree::getRootNode: Inner error. Cannot get a leaf root node. " << nid << ":" << e.what();
+        msg << "DVPTree::getRootNode: Inner error. Cannot get a leaf root node. " << nid << ":" << e.what();
         NGTThrowException(msg);
       }
     }
@@ -313,6 +490,14 @@ class DVPTree {
     return n;
   }
 
+#if defined(NGT_SHARED_MEMORY_ALLOCATOR)
+  LeafNode *allocateLeafNode(NGT::ObjectSpace *os = 0) {
+    return new (leafNodes.allocator) LeafNode(leafObjectsSize, leafNodes.allocator);
+  }
+#else
+  LeafNode *allocateLeafNode(NGT::ObjectSpace *os = 0) { return new LeafNode(leafObjectsSize, os); }
+#endif
+
   void getAllLeafNodeIDs(std::vector<Node::ID> &leafIDs) {
     leafIDs.clear();
     Node *root = getRootNode();
@@ -350,7 +535,7 @@ class DVPTree {
   }
 
   void deserialize(std::ifstream &is) {
-    leafNodes.deserialize(is, objectSpace);
+    leafNodes.deserialize(is, leafObjectsSize, objectSpace);
     internalNodes.deserialize(is, objectSpace);
   }
 
@@ -360,7 +545,7 @@ class DVPTree {
   }
 
   void deserializeAsText(std::ifstream &is) {
-    leafNodes.deserializeAsText(is, objectSpace);
+    leafNodes.deserializeAsText(is, leafObjectsSize, objectSpace);
     internalNodes.deserializeAsText(is, objectSpace);
   }
 
@@ -490,10 +675,10 @@ class DVPTree {
   std::string name;
 
 #ifdef NGT_SHARED_MEMORY_ALLOCATOR
-  PersistentRepository<LeafNode> leafNodes;
+  TreeNodes<LeafNode> leafNodes;
   PersistentRepository<InternalNode> internalNodes;
 #else
-  Repository<LeafNode> leafNodes;
+  TreeNodes<LeafNode> leafNodes;
   Repository<InternalNode> internalNodes;
 #endif
 

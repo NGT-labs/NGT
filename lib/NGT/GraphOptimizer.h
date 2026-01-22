@@ -516,7 +516,7 @@ class GraphOptimizer {
     {
       graphRepository.deleteAll();
       treeIndex.DVPTree::deleteAll();
-      treeIndex.DVPTree::insertNode(treeIndex.DVPTree::leafNodes.allocate());
+      treeIndex.DVPTree::insertNode(treeIndex.DVPTree::allocateLeafNode());
     }
 
     NGT::NeighborhoodGraph::Property &prop = graphIndex.getGraphProperty();
