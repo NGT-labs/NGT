@@ -548,7 +548,7 @@ class Index {
     saveIndex(path);
   }
 #ifndef NGT_SHARED_MEMORY_ALLOCATOR
-  void save(std::string indexPath) { saveIndex(indexPath); }
+  void save(const std::string &indexPath) { saveIndex(indexPath); }
 #endif
   static void mkdir(const std::string &dir) {
     if (::mkdir(dir.c_str(), S_IRWXU | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH) != 0) {
