@@ -236,7 +236,7 @@ NGTObjectDistances ngt_create_empty_results(NGTError);
 bool ngt_search_index(NGTIndex, double *, int32_t, size_t, float, float, NGTObjectDistances, NGTError);
 
 bool ngt_search_index_as_float(NGTIndex, float *, int32_t, size_t, float, float, NGTObjectDistances,
-                               NGTError);
+                               NGTError, int);
 
 bool ngt_search_index_as_uint8(NGTIndex, uint8_t *, int32_t, size_t, float, float, NGTObjectDistances,
                                NGTError);

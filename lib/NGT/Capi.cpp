@@ -520,7 +520,7 @@ static bool ngt_search_index_(NGT::Index *pindex, NGT::Object *ngtquery, size_t 
   sc.setSize(size);                                            // the number of resultant objects.
   sc.setRadius(radius);                                        // search radius.
   sc.setEpsilon(epsilon);                                      // set exploration coefficient.
-  if (edge_size != INT_MIN) {
+  if (edge_size > 0) {
     sc.setEdgeSize(edge_size); // set # of edges for each node
   }
 
@@ -565,7 +565,7 @@ bool ngt_search_index(NGTIndex index, double *query, int32_t query_dim, size_t s
 }
 
 bool ngt_search_index_as_float(NGTIndex index, float *query, int32_t query_dim, size_t size, float epsilon,
-                               float radius, NGTObjectDistances results, NGTError error) {
+                               float radius, NGTObjectDistances results, int edge_size, NGTError error) {
   if (index == NULL || query == NULL || results == NULL || query_dim <= 0) {
     std::stringstream ss;
     ss << "Capi : " << __FUNCTION__ << "() : parametor error: index = " << index << " query = " << query
@@ -584,7 +584,7 @@ bool ngt_search_index_as_float(NGTIndex index, float *query, int32_t query_dim, 
   try {
     std::vector<float> vquery(&query[0], &query[query_dim]);
     ngtquery = pindex->allocateObject(vquery);
-    ngt_search_index_(pindex, ngtquery, size, epsilon, radius, results);
+    ngt_search_index_(pindex, ngtquery, size, epsilon, radius, results, edge_size);
   } catch (std::exception &err) {
     std::stringstream ss;
     ss << "Capi : " << __FUNCTION__ << "() : Error: " << err.what();
