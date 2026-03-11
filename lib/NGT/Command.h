@@ -117,7 +117,6 @@ class Command {
         if (tokens.size() >= 3) {
           stepOfRefinementExpansion = NGT::Common::strtod(tokens[2]);
         }
-        // stepはepsilonと共有
         if (tokens.size() >= 4 && step == 0) {
           step = NGT::Common::strtol(tokens[3]);
         }
@@ -185,8 +184,9 @@ class Command {
   void exportObjects(Args &args);
   void rebuild(Args &args);
   void preprocessForPQ(Args &args);
+  void constructQgGraph(Args &args);
 #ifdef NGT_FOREST
-  void constructForestGraph(NGT::Args &args);
+  void constructForest(NGT::Args &args);
 #endif
 
   void info(Args &args);

@@ -22,6 +22,7 @@
 #include <map>
 #include <set>
 #include <unordered_set>
+#include <unordered_map>
 #include <iostream>
 #include <sstream>
 #include <fstream>
@@ -35,6 +36,7 @@
 #include <typeinfo>
 #include <limits>
 
+#include <execinfo.h>
 #include <sys/time.h>
 #include <fcntl.h>
 #if defined(__linux__)
@@ -57,6 +59,27 @@ typedef float Distance;
 #ifdef NGT_HALF_FLOAT
 typedef half_float::half float16;
 #endif
+
+// Aligned memory allocation helpers
+inline void *alignedAlloc64(size_t size) {
+#if __cplusplus >= 201703L
+  return ::operator new(size, std::align_val_t(64));
+#else
+  void *ptr = nullptr;
+  if (posix_memalign(&ptr, 64, size) != 0) {
+    throw std::bad_alloc();
+  }
+  return ptr;
+#endif
+}
+
+inline void alignedFree64(void *ptr) {
+#if __cplusplus >= 201703L
+  ::operator delete(ptr, std::align_val_t(64));
+#else
+  free(ptr);
+#endif
+}
 
 class quint8 {
  public:
@@ -323,10 +346,11 @@ class Args : public std::map<std::string, std::string> {
 
 class Timer {
  public:
-  Timer() : time(0) {}
+  Timer() { reset(); }
   void reset() {
     time  = 0;
     ntime = 0;
+    count = 0;
   }
 
   void start() {
@@ -348,6 +372,7 @@ class Timer {
     }
     time += (double)sec + (double)nsec / 1000000000.0;
     ntime += sec * 1000000000L + nsec;
+    count++;
   }
 
   void add(Timer &t) {
@@ -356,24 +381,28 @@ class Timer {
   }
 
   friend std::ostream &operator<<(std::ostream &os, Timer &t) {
-    auto time = t.time;
+    show(os, t.time);
+    if (t.count > 1) {
+      os << "*" << t.count;
+    }
+    return os;
+  }
+
+  static void show(std::ostream &os, double time) {
     if (time < 1.0) {
       time *= 1000.0;
       os << std::setprecision(6) << time << " (ms)";
-      return os;
-    }
-    if (time < 60.0) {
+    } else if (time < 60.0) {
       os << std::setprecision(6) << time << " (s)";
-      return os;
+    } else {
+      time /= 60.0;
+      if (time < 60.0) {
+        os << std::setprecision(6) << time << " (m)";
+      } else {
+        time /= 60.0;
+        os << std::setprecision(6) << time << " (h)";
+      }
     }
-    time /= 60.0;
-    if (time < 60.0) {
-      os << std::setprecision(6) << time << " (m)";
-      return os;
-    }
-    time /= 60.0;
-    os << std::setprecision(6) << time << " (h)";
-    return os;
   }
 
   struct timespec startTime;
@@ -383,6 +412,86 @@ class Timer {
   int64_t nsec;
   int64_t ntime; // nano second
   double time;   // second
+  size_t count;
+};
+
+class Timers {
+ public:
+  Timers() : prev(nullptr) {
+    std::string label = "timers initialize";
+    size_t n          = 100;
+    for (size_t i = 0; i < n; i++) {
+      restart(label);
+      stop();
+    }
+    std::cerr << "Timers: Time=" << timers[label].second.time << " Count=" << timers[label].second.count
+              << std::endl;
+    overHead = timers[label].second.time / timers[label].second.count;
+    std::cerr << "Timers: over head=" << overHead << std::endl;
+    timers.clear();
+  }
+  Timer &get(const std::string t) {
+    if (timers.count(t) == 0) {
+      timers[t].first = timers.size();
+    }
+    prev = &timers[t].second;
+    return *prev;
+  }
+  Timer &get() {
+    if (prev != nullptr) {
+      return *prev;
+    } else {
+      return get("*");
+    }
+  }
+  void start(const std::string &t) { get(t).start(); }
+  void start() { get().start(); }
+  void restart(const std::string &t) { get(t).restart(); }
+  void restart() { get().restart(); }
+  void stop(const std::string &t) { get(t).stop(); }
+  void stop() { get().stop(); }
+  void show(std::ostream &os, bool timeSort = true) {
+    double total = 0.0;
+    std::vector<std::pair<std::string, std::pair<int, NGT::Timer>>> ts;
+    for (auto i = timers.begin(); i != timers.end(); ++i) {
+      std::pair<std::string, std::pair<int, NGT::Timer>> time;
+      time                    = *i;
+      double oh               = overHead * time.second.second.count;
+      time.second.second.time = time.second.second.time - oh < 0.0 ? 0.0 : time.second.second.time - oh;
+      total += time.second.second.time;
+      ts.emplace_back(time);
+    }
+    if (timeSort) {
+      std::sort(ts.begin(), ts.end(),
+                [](const std::pair<std::string, std::pair<int, NGT::Timer>> &a,
+                   const std::pair<std::string, std::pair<int, NGT::Timer>> &b) {
+                  return a.second.second.time > b.second.second.time;
+                });
+    } else {
+      std::sort(ts.begin(), ts.end(),
+                [](const std::pair<std::string, std::pair<int, NGT::Timer>> &a,
+                   const std::pair<std::string, std::pair<int, NGT::Timer>> &b) {
+                  return a.second.first < b.second.first;
+                });
+    }
+    for (auto i = ts.begin(); i != ts.end(); ++i) {
+      os << (*i).second.first << "\t" << (*i).second.second << "\t" << (*i).first << std::endl;
+    }
+    os << "Total time=";
+    Timer::show(os, total);
+    os << std::endl;
+  }
+  std::unordered_map<std::string, std::pair<int, NGT::Timer>> timers;
+  Timer *prev;
+  double overHead;
+};
+
+class TimersProvider {
+ public:
+  static Timers &getTimers() {
+    static Timers timers;
+    return timers;
+  }
 };
 
 class Common {
@@ -515,6 +624,7 @@ class Common {
     str << size << " " << unit;
     return str.str();
   }
+
   static std::string getProcessVmSizeStr() { return sizeToString(getProcessVmSize()); }
   static std::string getProcessVmPeakStr() { return sizeToString(getProcessVmPeak()); }
   static std::string getProcessVmRSSStr() { return sizeToString(getProcessVmRSS()); }
@@ -910,6 +1020,37 @@ class BooleanSet {
   inline void reset(size_t i) { getEntry(i) &= ~getBitString(i); }
   std::vector<uint64_t> bitvec;
   uint64_t size;
+};
+
+template <typename TYPE = uint8_t> class BooleanVectorByEpoch {
+ public:
+  BooleanVectorByEpoch(size_t s = 0x100000) {
+    size  = 1u << (32 - __builtin_clz(s - 1));
+    array = new TYPE[size]();
+    clear();
+    epoch = 0;
+    mask  = size - 1;
+  }
+  ~BooleanVectorByEpoch() { delete[] array; }
+  void clear() { memset(array, 0, size * sizeof(TYPE)); };
+  void reset() {
+    constexpr size_t max = sizeof(TYPE) * 0x100 - 1;
+    if (epoch == max) {
+      clear();
+      epoch = 0;
+    }
+    epoch += 1;
+  }
+  bool visit(uint32_t id) {
+    id &= mask;
+    bool stat = (array[id] == epoch);
+    array[id] = epoch;
+    return stat;
+  };
+  TYPE *array;
+  size_t epoch = 1;
+  size_t size;
+  size_t mask;
 };
 
 class PropertySet : public std::map<std::string, std::string> {
@@ -1647,7 +1788,10 @@ template <class TYPE> class DynamicLengthVector {
   void push_back(const TYPE &data) {
     extend();
     vectorSize++;
-    copy((*this).at(vectorSize - 1), data);
+    uint8_t buf[elementSize];
+    memset(buf, 0, elementSize);
+    memcpy(buf, &data, sizeof(data));
+    copy((*this).at(vectorSize - 1), *reinterpret_cast<TYPE *>(buf));
   }
 
   void reserve(size_t s) {
@@ -1674,8 +1818,11 @@ template <class TYPE> class DynamicLengthVector {
       }
       reserve(asize);
       uint8_t *base = vector;
+      uint8_t buf[elementSize];
+      memset(buf, 0, elementSize);
+      memcpy(buf, &v, sizeof(v));
       for (size_t i = vectorSize; i < s; i++) {
-        copy(*reinterpret_cast<TYPE *>(base + i * elementSize), v);
+        copy(*reinterpret_cast<TYPE *>(base + i * elementSize), *reinterpret_cast<TYPE *>(buf));
       }
     }
     vectorSize = s;
@@ -1918,10 +2065,8 @@ template <class TYPE> class PersistentRepository {
         NGT::Serializer::write(os, '+');
         if (objectspace == 0) {
           assert(0);
-          //(*this)[idx]->serialize(os, allocator);
         } else {
           assert(0);
-          //(*this)[idx]->serialize(os, allocator, objectspace);
         }
       }
     }
@@ -1950,12 +2095,10 @@ template <class TYPE> class PersistentRepository {
       case '+': {
         if (objectspace == 0) {
           TYPE *v = new (allocator) TYPE(allocator);
-          //v->deserialize(is, allocator);
           assert(0);
           (*this).push_back(v);
         } else {
           TYPE *v = new (allocator) TYPE(allocator, objectspace);
-          //v->deserialize(is, allocator, objectspace);
           assert(0);
           (*this).push_back(v);
         }
@@ -2656,8 +2799,204 @@ class InsertContainer : public Container {
 template <class T, class Container = std::vector<T>, class Compare = std::greater<T>>
 struct PriorityQueue : std::priority_queue<T, Container, Compare> {
   using std::priority_queue<T, Container, Compare>::c;
-  //using std::priority_queue<T, Container, Compare>::value_comp; ////-/ 比較も欲しければ
   void pop_back() { c.pop_back(); }
+};
+
+namespace detail {
+struct CandidateObject {
+  uint32_t id;
+  uint16_t distance;
+  bool visited;
+};
+} // namespace detail
+
+template <typename T = detail::CandidateObject> class HeapCandidateObjects {
+ public:
+  struct CompareByDistance {
+    bool operator()(const T &a, const T &b) const { return a.distance > b.distance; }
+  };
+
+  struct CompareByDistanceMax {
+    bool operator()(const T &a, const T &b) const { return a.distance < b.distance; }
+  };
+
+ private:
+  std::vector<T> topKResults;
+
+  std::vector<T> expandedResults;
+
+  std::vector<T> candidateNode;
+
+  uint16_t k;
+  uint16_t capacity;
+  size_t expandedResultsCapacity;
+  float resultExpansion;
+  uint16_t lastPoppedDistance;
+  uint16_t cachedMaxDistance;
+  size_t maxExpandedIndex;
+
+  __attribute__((always_inline)) inline void siftDownMaxHeap(std::vector<T> &heap) {
+    const size_t n = heap.size();
+    if (n <= 1) return;
+
+    size_t i = 0;
+    while (true) {
+      const size_t left  = 2 * i + 1;
+      const size_t right = 2 * i + 2;
+      size_t largest     = i;
+
+      if (left < n && heap[left].distance > heap[largest].distance) {
+        largest = left;
+      }
+      if (right < n && heap[right].distance > heap[largest].distance) {
+        largest = right;
+      }
+
+      if (largest == i) break;
+
+      std::swap(heap[i], heap[largest]);
+      i = largest;
+    }
+  }
+
+ public:
+  using Object = T;
+
+  HeapCandidateObjects(uint16_t searchSize = 10, float resultExpansionValue = 2.0) {
+    k                       = searchSize;
+    resultExpansion         = resultExpansionValue;
+    capacity                = (uint16_t)(k * resultExpansion);
+    expandedResultsCapacity = (capacity > k) ? (capacity - k) : 0;
+    lastPoppedDistance      = 0;
+    cachedMaxDistance       = 0;
+    maxExpandedIndex        = 0;
+  }
+
+  void reset(uint16_t searchSize) {
+    topKResults.clear();
+    candidateNode.clear();
+    expandedResults.clear();
+
+    k                       = searchSize;
+    capacity                = (uint16_t)(k * resultExpansion);
+    expandedResultsCapacity = (capacity > k) ? (capacity - k) : 0;
+    lastPoppedDistance      = 0;
+    cachedMaxDistance       = 0;
+    maxExpandedIndex        = 0;
+
+    if (topKResults.capacity() < k) {
+      topKResults.reserve(k);
+    }
+    if (expandedResults.capacity() < expandedResultsCapacity) {
+      expandedResults.reserve(expandedResultsCapacity);
+    }
+  }
+
+  void reset(uint16_t searchSize, float resultExpansionValue) {
+    resultExpansion = resultExpansionValue;
+    reset(searchSize);
+  }
+
+  void setResultExpansion(float value) { resultExpansion = value; }
+
+  __attribute__((always_inline)) inline bool push(T &element) {
+
+    candidateNode.push_back(element);
+    std::push_heap(candidateNode.begin(), candidateNode.end(),
+                   [](const T &a, const T &b) { return a.distance > b.distance; });
+
+    const size_t currentSize = topKResults.size();
+
+    if (__builtin_expect(currentSize >= k, 1)) {
+      if (element.distance >= cachedMaxDistance) {
+        const size_t expandedSize = expandedResults.size();
+        if (expandedSize < expandedResultsCapacity) {
+          if (expandedSize == 0 || element.distance > expandedResults[maxExpandedIndex].distance) {
+            maxExpandedIndex = expandedSize;
+          }
+          expandedResults.push_back(element);
+        } else if (expandedSize > 0 && element.distance < expandedResults[maxExpandedIndex].distance) {
+          expandedResults[maxExpandedIndex] = element;
+          maxExpandedIndex                  = 0;
+          for (size_t i = 1; i < expandedSize; ++i) {
+            if (expandedResults[i].distance > expandedResults[maxExpandedIndex].distance) {
+              maxExpandedIndex = i;
+            }
+          }
+        }
+        return false;
+      }
+    }
+
+    if (currentSize < k) {
+      topKResults.push_back(element);
+      std::push_heap(topKResults.begin(), topKResults.end(),
+                     [](const T &a, const T &b) { return a.distance < b.distance; });
+      cachedMaxDistance = topKResults.front().distance;
+
+      if (currentSize + 1 == k) {
+        return true;
+      }
+      return false;
+    } else {
+      const size_t expandedSize = expandedResults.size();
+      if (expandedSize < expandedResultsCapacity) {
+        if (expandedSize == 0 || topKResults.front().distance > expandedResults[maxExpandedIndex].distance) {
+          maxExpandedIndex = expandedSize;
+        }
+        expandedResults.push_back(topKResults.front());
+      } else if (expandedSize > 0 &&
+                 topKResults.front().distance < expandedResults[maxExpandedIndex].distance) {
+        expandedResults[maxExpandedIndex] = topKResults.front();
+        maxExpandedIndex                  = 0;
+        for (size_t i = 1; i < expandedSize; ++i) {
+          if (expandedResults[i].distance > expandedResults[maxExpandedIndex].distance) {
+            maxExpandedIndex = i;
+          }
+        }
+      }
+
+      topKResults.front() = element;
+      siftDownMaxHeap(topKResults);
+      cachedMaxDistance = topKResults.front().distance;
+      return true;
+    }
+  }
+  __attribute__((always_inline)) inline bool pop(T &result) {
+    if (__builtin_expect(!candidateNode.empty(), 1)) {
+      result = candidateNode.front();
+      std::pop_heap(candidateNode.begin(), candidateNode.end(),
+                    [](const T &a, const T &b) { return a.distance > b.distance; });
+      candidateNode.pop_back();
+      lastPoppedDistance = result.distance;
+      return true;
+    }
+    return false;
+  }
+
+  int getObjects(T *output, int maxCount = 0) {
+    const size_t totalSize         = topKResults.size() + expandedResults.size();
+    const size_t effectiveMaxCount = (maxCount == 0) ? totalSize : static_cast<size_t>(maxCount);
+
+    const size_t topKCount = std::min(topKResults.size(), effectiveMaxCount);
+    std::memcpy(output, topKResults.data(), topKCount * sizeof(T));
+
+    const size_t remaining     = effectiveMaxCount - topKCount;
+    const size_t expandedCount = std::min(expandedResults.size(), remaining);
+    std::memcpy(output + topKCount, expandedResults.data(), expandedCount * sizeof(T));
+
+    return static_cast<int>(topKCount + expandedCount);
+  }
+
+  void setK(uint16_t cap) {
+    k                       = cap;
+    capacity                = (uint16_t)(k * resultExpansion);
+    expandedResultsCapacity = (capacity > k) ? (capacity - k) : 0;
+  }
+
+  __attribute__((always_inline)) inline uint16_t getMaxDistance() const { return cachedMaxDistance; }
+
+  uint16_t getCurrentDistance() const { return lastPoppedDistance; }
 };
 
 } // namespace NGT

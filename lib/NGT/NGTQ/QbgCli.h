@@ -73,6 +73,9 @@ class CLI {
   void buildQG(NGT::Args &args);
   void appendQG(NGT::Args &args);
   void searchQG(NGT::Args &args);
+#ifdef NGTQ_QUANTIZED_TREE
+  void quantizeTree(NGT::Args &args);
+#endif
 #ifdef NGTQ_OBGRAPH
   void setBlobID(NGT::Args &args);
 #endif
@@ -143,6 +146,10 @@ class CLI {
       appendQG(args);
     } else if (command == "search-qg") {
       searchQG(args);
+#ifdef NGTQ_QUANTIZED_TREE
+    } else if (command == "quantize-tree") {
+      quantizeTree(args);
+#endif
 #ifdef NGTQ_OBGRAPH
     } else if (command == "set-blob-id") {
       setBlobID(args);

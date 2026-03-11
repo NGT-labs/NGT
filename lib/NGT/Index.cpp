@@ -916,6 +916,7 @@ void NGT::Index::extractInsertionOrder(InsertionOrder &insertionOrder) {
 void NGT::Index::createIndex(size_t threadNumber, size_t sizeOfRepository) {
   StdOstreamRedirector redirector(redirect);
   redirector.begin();
+
   try {
     InsertionOrder insertionOrder;
     NGT::Property prop;
@@ -1166,6 +1167,7 @@ void NGT::GraphIndex::constructObjectSpace(NGT::Property &prop) {
   }
 
   switch (prop.objectType) {
+  case NGT::ObjectSpace::ObjectType::ObjectTypeUnset:
   case NGT::ObjectSpace::ObjectType::Float:
     objectSpace = new ObjectSpaceRepository<float, double>(dimension, typeid(float), prop.distanceType);
     break;
@@ -1261,6 +1263,43 @@ void NGT::GraphIndex::loadIndex(const string &ifile, bool readOnly, NGT::Index::
       NGTThrowException(msg);
     }
   }
+}
+
+void NGT::GraphIndex::saveObjectRepository(const std::string &ofile) {
+#ifndef NGT_SHARED_MEMORY_ALLOCATOR
+  try {
+    mkdir(ofile);
+  } catch (...) {
+  }
+  bool save = false;
+  {
+    if (property.objectType == NGT::ObjectSpace::ObjectType::ObjectTypeUnset &&
+        objectSpace->getRepository().size() != 0) {
+      property.objectType = NGT::ObjectSpace::ObjectType::Float;
+      if (repository.size() == 0) {
+        NGT::ObjectSpace::ObjectType type = objectSpace->getEstimatedObjectType();
+        if (type != NGT::ObjectSpace::ObjectType::Float) {
+          NGT::ObjectSpace *convertedObjectSpace = objectSpace->convertObjectSpace(*objectSpace, type);
+          convertedObjectSpace->serialize(ofile + "/obj");
+          convertedObjectSpace->deleteAll();
+          delete convertedObjectSpace;
+          save                = true;
+          property.objectType = type;
+        }
+      }
+    }
+  }
+  if (objectSpace != 0 && save == false) {
+    objectSpace->serialize(ofile + "/obj");
+  } else {
+    std::cerr << "saveIndex::Warning! ObjectSpace is null. continue saving..." << std::endl;
+  }
+#ifdef NGT_REFINEMENT
+  if (refinementObjectSpace != 0) {
+    refinementObjectSpace->serialize(ofile + "/robj");
+  }
+#endif
+#endif
 }
 
 void NGT::GraphIndex::saveProperty(const std::string &file) { NGT::Property::save(*this, file); }
@@ -1576,7 +1615,6 @@ static void insertMultipleSearchResults(GraphIndex &neighborhoodGraph,
     // This processing occupies about 30% of total indexing time when batch size is 200.
     // Only initial batch objects should be connected for each other.
     // The number of nodes in the graph is checked to know whether the batch is initial.
-    //size_t size = NeighborhoodGraph::property.edgeSizeForCreation;
     size_t size = neighborhoodGraph.NeighborhoodGraph::property.edgeSizeForCreation;
     // add distances from a current object to subsequence objects to imitate of sequential insertion.
 

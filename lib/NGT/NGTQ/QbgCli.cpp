@@ -180,19 +180,34 @@ class QbgCliBuildParameters : public QBG::BuildParameters {
     }
 #endif
     {
-      char refinementDataType = args.getChar("R", '-');
-      switch (refinementDataType) {
-      case 'f': creation.refinementDataType = NGTQ::DataTypeFloat; break;
+      auto refinementDataType = args.getString("R", "-");
+      std::vector<std::string> tokens;
+      NGT::Common::tokenize(refinementDataType, tokens, ":,");
+      creation.refinementDataType = NGTQ::DataTypeNone;
+      if (tokens.size() >= 1 && tokens[0].size() >= 1) {
+        switch (tokens[0][0]) {
+        case 'f': creation.refinementDataType = NGTQ::DataTypeFloat; break;
 #ifdef NGT_HALF_FLOAT
-      case 'h': creation.refinementDataType = NGTQ::DataTypeFloat16; break;
+        case 'h': creation.refinementDataType = NGTQ::DataTypeFloat16; break;
 #endif
-      case '-': creation.refinementDataType = NGTQ::DataTypeNone; break;
-      default:
-        std::stringstream msg;
-        msg << "Command::CreateParameters: Error: Invalid refinement data type. " << refinementDataType;
-        NGTThrowException(msg);
+        case '-': creation.refinementDataType = NGTQ::DataTypeNone; break;
+        default:
+          std::stringstream msg;
+          msg << "Command::CreateParameters: Error: Invalid refinement data type. " << refinementDataType;
+          NGTThrowException(msg);
+        }
+      }
+      if (tokens.size() >= 2 && tokens[1].size() >= 1) {
+        switch (tokens[1][0]) {
+        case 'O':
+        case 'o': creation.orderedSearchRanking = true; break;
+        default: creation.orderedSearchRanking = false; break;
+        }
       }
     }
+#ifdef NGTQ_QUANTIZED_TREE
+    creation.maxObjectsPerNode = args.getl("k", -1);
+#endif
   }
 
   void getHierarchicalClustringParameters() {
@@ -561,9 +576,19 @@ void searchQG(NGTQG::Index &index, SearchParameters &searchParameters, ostream &
         index.NGTQG::Index::search(searchQuery);
         timer.stop();
         break;
+      case 'Q':
+        timer.start();
+        index.NGTQG::Index::searchUsingDistanceSorter(searchQuery);
+        timer.stop();
+        break;
       case 's':
         timer.start();
         index.linearSearch(searchQuery);
+        timer.stop();
+        break;
+      default:
+        timer.start();
+        index.NGTQG::Index::searchClassic(searchQuery);
         timer.stop();
         break;
       }
@@ -612,7 +637,7 @@ void searchQG(NGTQG::Index &index, SearchParameters &searchParameters, ostream &
 
 void QBG::CLI::searchQG(NGT::Args &args) {
   const string usage =
-      "Usage: ngtqg search-qg [-i index-type(g|t|s)] [-n result-size] [-e epsilon] [-E edge-size] "
+      "Usage: qbg search-qg [-i index-type(g|t|s)] [-n result-size] [-e epsilon] [-E edge-size] "
       "[-o output-mode] [-p result-expansion] index(input) query.tsv(input)";
 
   args.parse("v");
@@ -663,8 +688,79 @@ void QBG::CLI::searchQG(NGT::Args &args) {
   }
 }
 
+#ifdef NGTQ_QUANTIZED_TREE
+void quantizeTree(const std::string &indexPath, size_t maxObjectsPerNode, bool verbose) {
+  NGT::Index index(indexPath);
+
+  NGT::GraphAndTreeIndex &graphIndex = static_cast<NGT::GraphAndTreeIndex &>(index.getIndex());
+
+  // Check if already quantized or not ready
+  size_t objectCount    = index.getObjectRepositorySize();
+  size_t graphNodeCount = graphIndex.getGraphRepositorySize();
+  if (objectCount < graphNodeCount) {
+    std::cerr << "quantizeTree: already quantized. objectCount=" << objectCount
+              << " graphNodeCount=" << graphNodeCount << std::endl;
+    std::string quantizedIndexPath = indexPath + "/" + NGTQG::Index::getQGDirectoryName();
+    NGTQ::Index quantizedIndex(quantizedIndexPath);
+    quantizedIndex.getQuantizer().property.treeQuantization = true;
+    quantizedIndex.save();
+    return;
+  }
+  if (objectCount > graphNodeCount) {
+    std::cerr << "quantizeTree: graph index is not yet generated. objectCount=" << objectCount
+              << " graphNodeCount=" << graphNodeCount << std::endl;
+    return;
+  }
+
+  auto &leafNodes = graphIndex.DVPTree::leafNodes;
+
+  std::cerr << "# of leaf nodes = " << leafNodes.size() << std::endl;
+
+  size_t graphSize = graphIndex.getGraphRepositorySize() - 1;
+  std::cerr << "Current graph size = " << graphSize << std::endl;
+
+  for (size_t i = 1; i < leafNodes.size(); i++) {
+    if (leafNodes[i] != 0) {
+      NGT::LeafNode *leaf          = leafNodes[i];
+      NGT::ObjectDistance *objects = leaf->getObjectIDs();
+      int objectSize               = leaf->objectSize;
+
+      int limitedSize = (maxObjectsPerNode > 0 && objectSize > (int)maxObjectsPerNode)
+                            ? (int)maxObjectsPerNode
+                            : objectSize;
+      NGT::ObjectDistances neighbors;
+      neighbors.reserve(limitedSize);
+      for (int j = 0; j < limitedSize; j++) {
+        neighbors.push_back(NGT::ObjectDistance(objects[j].id, objects[j].distance));
+      }
+
+      NGT::ObjectID newNodeId = graphSize + i;
+      static_cast<NGT::NeighborhoodGraph &>(graphIndex).repository.insert(newNodeId, neighbors);
+
+      if (verbose && i < 5) {
+        std::cerr << "  Leaf[" << i << "] objectSize=" << objectSize << "(limited to " << limitedSize << ")"
+                  << " -> GraphNode[" << newNodeId << "]" << std::endl;
+      }
+    }
+  }
+
+  std::cerr << "New graph size = " << graphIndex.getGraphRepositorySize() << std::endl;
+
+  index.save();
+  index.close();
+
+  {
+    std::string quantizedIndexPath = indexPath + "/" + NGTQG::Index::getQGDirectoryName();
+    NGTQ::Index quantizedIndex(quantizedIndexPath);
+    quantizedIndex.getQuantizer().property.treeQuantization = true;
+    quantizedIndex.save();
+  }
+}
+#endif
+
 void QBG::CLI::createQG(NGT::Args &args) {
-  const std::string usage = "Usage: qbg create-qg [-Q dimension-of-subvector] index";
+  const std::string usage =
+      "Usage: qbg create-qg [-Q dimension-of-subvector] [-k max-objects-per-node] index";
 
   QbgCliBuildParameters buildParameters(args);
   buildParameters.getCreationParameters();
@@ -678,10 +774,20 @@ void QBG::CLI::createQG(NGT::Args &args) {
     msg << usage << endl;
     NGTThrowException(msg);
   }
+
+  bool verbose = args.getBool("v");
+
   std::cerr << "creating..." << std::endl;
   NGTQG::Index::create(indexPath, buildParameters);
   std::cerr << "appending..." << std::endl;
   NGTQG::Index::append(indexPath, buildParameters);
+
+#ifdef NGTQ_QUANTIZED_TREE
+  if (buildParameters.creation.maxObjectsPerNode >= 0) {
+    std::cerr << "quantizing tree..." << std::endl;
+    ::quantizeTree(indexPath, static_cast<size_t>(buildParameters.creation.maxObjectsPerNode), verbose);
+  }
+#endif
 }
 
 void QBG::CLI::appendQG(NGT::Args &args) {
@@ -698,6 +804,35 @@ void QBG::CLI::appendQG(NGT::Args &args) {
   QBG::Index::appendFromObjectRepository(indexPath, indexPath + "/" + NGTQG::Index::getQGDirectoryName(),
                                          false);
 }
+
+#ifdef NGTQ_QUANTIZED_TREE
+void QBG::CLI::quantizeTree(NGT::Args &args) {
+  const std::string usage = "Usage: qbg quantize-tree [-k max-objects-per-node] index";
+
+  args.parse("v");
+  string indexPath;
+  try {
+    indexPath = args.get("#1");
+  } catch (...) {
+    std::stringstream msg;
+    msg << "No index is specified." << std::endl;
+    msg << usage << endl;
+    NGTThrowException(msg);
+  }
+
+  bool verbose             = args.getBool("v");
+  size_t maxObjectsPerNode = args.getl("k", 32);
+
+  try {
+    ::quantizeTree(indexPath, maxObjectsPerNode, verbose);
+  } catch (NGT::Exception &err) {
+    std::stringstream msg;
+    msg << "Error. " << err.what() << std::endl;
+    msg << usage << endl;
+    NGTThrowException(msg);
+  }
+}
+#endif
 
 #ifdef NGTQ_OBGRAPH
 void QBG::CLI::setBlobID(NGT::Args &args) {

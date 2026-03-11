@@ -554,7 +554,6 @@ class Clustering {
         assignedObjectCount++;
       }
     }
-    //size_t notAssignedObjectCount = 0;
     vector<uint32_t> notAssignedObjectIDs;
     notAssignedObjectIDs.reserve(dataSize - assignedObjectCount);
     for (size_t idx = 0; idx < dataSize; idx++) {

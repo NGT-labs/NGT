@@ -1278,16 +1278,13 @@ class HierarchicalKmeans {
     numOfSecondObjects         = numOfObjectsForEachSecondCluster == 0
                                      ? numOfSecondObjects
                                      : numOfSecondClusters * numOfObjectsForEachSecondCluster;
-    //auto &quantizer = static_cast<NGTQ::QuantizerInstance<uint8_t>&>(index.getQuantizer());
-    //auto &objectSpace = quantizer.globalCodebookIndex.getObjectSpace();
-    size_t numOfObjects = vectors.size();
+    size_t numOfObjects        = vectors.size();
     if (numOfSecondObjects > numOfObjects) {
       numOfSecondObjects = numOfObjects;
     }
 
     NGT::Clustering firstClustering(initMode, NGT::Clustering::ClusteringTypeKmeansWithoutNGT,
                                     maximumIteration);
-    //NGT::Clustering firstClustering(initMode, NGT::Clustering::ClusteringTypeKmeansWithNGT, maximumIteration);
     firstClustering.setClusterSizeConstraintCoefficient(false);
     std::vector<NGT::Clustering::Cluster> firstClusters;
     NGT::Timer timer;

@@ -103,23 +103,23 @@ class PrimitiveComparator {
     __m512 sum512 = _mm512_setzero_ps();
     while (a < last) {
       __m512 v = _mm512_sub_ps(_mm512_loadu_ps(a), _mm512_loadu_ps(b));
-      sum512   = _mm512_add_ps(sum512, _mm512_mul_ps(v, v));
+      sum512   = _mm512_fmadd_ps(v, v, sum512);
       a += 16;
       b += 16;
     }
 
-    __m256 sum256 = _mm256_add_ps(_mm512_extractf32x8_ps(sum512, 0), _mm512_extractf32x8_ps(sum512, 1));
-    __m128 sum128 = _mm_add_ps(_mm256_extractf128_ps(sum256, 0), _mm256_extractf128_ps(sum256, 1));
-#elif defined(NGT_AVX2)
+    return sqrt(static_cast<double>(_mm512_reduce_add_ps(sum512)));
+#else
+#if defined(NGT_AVX2)
     __m256 sum256 = _mm256_setzero_ps();
     __m256 v;
     while (a < last) {
       v      = _mm256_sub_ps(_mm256_loadu_ps(a), _mm256_loadu_ps(b));
-      sum256 = _mm256_add_ps(sum256, _mm256_mul_ps(v, v));
+      sum256 = _mm256_fmadd_ps(v, v, sum256);
       a += 8;
       b += 8;
       v      = _mm256_sub_ps(_mm256_loadu_ps(a), _mm256_loadu_ps(b));
-      sum256 = _mm256_add_ps(sum256, _mm256_mul_ps(v, v));
+      sum256 = _mm256_fmadd_ps(v, v, sum256);
       a += 8;
       b += 8;
     }
@@ -152,6 +152,7 @@ class PrimitiveComparator {
 
     double s = f[0] + f[1] + f[2] + f[3];
     return sqrt(s);
+#endif
   }
 
 #ifdef NGT_HALF_FLOAT
@@ -232,6 +233,68 @@ class PrimitiveComparator {
 #endif
 
   inline static double compareL2(const unsigned char *a, const unsigned char *b, size_t size) {
+#define COMPARATOR_L2_AVX512_UINT8
+#if defined(NGT_AVX512) && defined(COMPARATOR_L2_AVX512_UINT8)
+    // AVX-512 optimized version: 64 bytes per iteration, integer arithmetic only
+    const unsigned char *last = a + size;
+    __m512i sum512            = _mm512_setzero_si512();
+    const __m512i mask        = _mm512_set1_epi16(0x00FF);
+
+    // 64-byte loop
+    while (a + 64 <= last) {
+      __m512i raw_a = _mm512_loadu_si512(a);
+      __m512i raw_b = _mm512_loadu_si512(b);
+
+      __m512i a_lo = _mm512_and_si512(raw_a, mask);
+      __m512i b_lo = _mm512_and_si512(raw_b, mask);
+      __m512i a_hi = _mm512_srli_epi16(raw_a, 8);
+      __m512i b_hi = _mm512_srli_epi16(raw_b, 8);
+
+      __m512i diff_lo = _mm512_sub_epi16(a_lo, b_lo);
+      __m512i diff_hi = _mm512_sub_epi16(a_hi, b_hi);
+
+      __m512i sq_lo = _mm512_madd_epi16(diff_lo, diff_lo);
+      __m512i sq_hi = _mm512_madd_epi16(diff_hi, diff_hi);
+
+      sum512 = _mm512_add_epi32(sum512, sq_lo);
+      sum512 = _mm512_add_epi32(sum512, sq_hi);
+
+      a += 64;
+      b += 64;
+    }
+
+    // 32-byte processing for remainder
+    if (a + 32 <= last) {
+      __m256i raw_a         = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(a));
+      __m256i raw_b         = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(b));
+      const __m256i mask256 = _mm256_set1_epi16(0x00FF);
+
+      __m256i a_lo = _mm256_and_si256(raw_a, mask256);
+      __m256i b_lo = _mm256_and_si256(raw_b, mask256);
+      __m256i a_hi = _mm256_srli_epi16(raw_a, 8);
+      __m256i b_hi = _mm256_srli_epi16(raw_b, 8);
+
+      __m256i diff_lo = _mm256_sub_epi16(a_lo, b_lo);
+      __m256i diff_hi = _mm256_sub_epi16(a_hi, b_hi);
+      __m256i sq_lo   = _mm256_madd_epi16(diff_lo, diff_lo);
+      __m256i sq_hi   = _mm256_madd_epi16(diff_hi, diff_hi);
+
+      __m256i sq_sum = _mm256_add_epi32(sq_lo, sq_hi);
+      sum512         = _mm512_add_epi32(sum512, _mm512_zextsi256_si512(sq_sum));
+
+      a += 32;
+      b += 32;
+    }
+
+    int32_t sum = _mm512_reduce_add_epi32(sum512);
+
+    while (a < last) {
+      int d = (int)*a++ - (int)*b++;
+      sum += d * d;
+    }
+
+    double s = (double)sum;
+#else
     __m128 sum                     = _mm_setzero_ps();
     const unsigned char *last      = a + size;
     const unsigned char *lastgroup = last - 7;
@@ -253,6 +316,7 @@ class PrimitiveComparator {
       int d = (int)*a++ - (int)*b++;
       s += d * d;
     }
+#endif
     return sqrt(s);
   }
 

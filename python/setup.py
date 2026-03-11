@@ -114,7 +114,7 @@ if sys.version_info.major >= 3:
             'include_dirs': ['/usr/local/include',
                              pybind11.get_include(True),
                              pybind11.get_include(False)],
-            'extra_compile_args': ['-std=c++11', '-Ofast',
+            'extra_compile_args': ['-std=c++17', '-Ofast',
                                    '-march=x86-64' if platform.processor() == 'x86-64' or
                                    platform.processor() == 'x86_64' else '',
                                    '-DNDEBUG'],
@@ -125,7 +125,7 @@ if sys.version_info.major >= 3:
             'include_dirs': ['/usr/local/include',
                              pybind11.get_include(True),
                              pybind11.get_include(False)],
-            'extra_compile_args': ['-std=c++11', '-Ofast',
+            'extra_compile_args': ['-std=c++17', '-Ofast',
                                    '-march=haswell' if platform.processor() == 'x86-64' or
                                    platform.processor() == 'x86_64' else '',
                                    '-DNDEBUG'],
@@ -136,7 +136,7 @@ if sys.version_info.major >= 3:
             'include_dirs': ['/usr/local/include',
                              pybind11.get_include(True),
                              pybind11.get_include(False)],
-            'extra_compile_args': ['-std=c++11', '-Ofast', '-march=native', '-DNDEBUG'],
+            'extra_compile_args': ['-std=c++17', '-Ofast', '-march=native', '-DNDEBUG', '-fvisibility-inlines-hidden', '-flto'],
             'sources': ['src/ngtpy.cpp']
         }
     if gcc_compiler:
@@ -148,7 +148,8 @@ if sys.version_info.major >= 3:
 
     shared_lib_params = {
         'library_dirs': ['/usr/local/lib', '/usr/local/lib64'],
-        'libraries': ['ngt', openmplib, 'blas', 'lapack']
+        'libraries': ['ngt', openmplib, 'blas', 'lapack'],
+        'extra_link_args': ['-flto']
     }
     included_lib_params = {
         'library_dirs': ['/usr/local/lib', '/usr/local/lib64'],

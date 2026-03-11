@@ -23,8 +23,6 @@
 #include "NGT/NGTQ/ObjectFile.h"
 #include "NGT/HashBasedBooleanSet.h"
 
-#define NGT_IVI
-
 #if defined(NGT_SHARED_MEMORY_ALLOCATOR) || defined(NGT_QBG_DISABLED)
 #undef NGTQ_QBG
 #else
@@ -46,13 +44,23 @@
 #define NGTQ_BLAS_FOR_ROTATION
 #define NGTQG_ROTATED_GLOBAL_CODEBOOKS
 #define NGTQ_OBJECT_IN_MEMORY
+#define NGTQG_PREFETCH
+
+#ifdef NGTQG_CLASSIC_SEARCH
+#undef NGT_REVISED_QUANTIZED_DISTANCE
+#else
+#define NGT_REVISED_QUANTIZED_DISTANCE
+#endif
 
 #define NGTQ_UINT8_LUT
+#ifdef NGT_REVISED_QUANTIZED_DISTANCE
+#define NGTQ_SIMD_BLOCK_SIZE 32
+#else
 #define NGTQ_SIMD_BLOCK_SIZE 16
+#endif
 #define NGTQ_BATCH_SIZE 2
 #define NGTQ_UINT4_OBJECT
 #define NGTQ_TOTAL_SCALE_OFFSET_COMPRESSION
-#define NGTQG_PREFETCH
 #if defined(NGT_AVX512)
 #define NGTQG_AVX512
 #elif defined(NGT_AVX2)
@@ -549,7 +557,8 @@ template <typename T> class InvertedIndexEntry : public NGT::DynamicLengthVector
     PARENT::elementSize = getSizeOfElement();
   }
   void pushBack() {
-    PARENT::push_back(InvertedIndexObject<T>());
+    InvertedIndexObject<T> t;
+    PARENT::push_back(t);
     PARENT::back().clear(numOfSubvectors);
   }
   void pushBack(size_t id) {
@@ -827,6 +836,8 @@ class Property {
     scalarQuantizationNoOfSamples  = 0;
     maxMagnitude                   = -1.0;
     graphType                      = GraphTypeBlobGraph;
+    orderedSearchRanking           = true;
+    treeQuantization               = false;
   }
 
   void save(const string &path) {
@@ -866,6 +877,8 @@ class Property {
     prop.set("ScalarQuantizationNoOfSamples", scalarQuantizationNoOfSamples);
     prop.set("MaxMagnitude", maxMagnitude);
     prop.set("GraphType", graphType);
+    prop.set("OrderedSearchRanking", orderedSearchRanking ? "True" : "False");
+    prop.set("TreeQuantization", treeQuantization ? "True" : "False");
     prop.save(path + "/prf");
   }
 
@@ -933,6 +946,18 @@ class Property {
     scalarQuantizationNoOfSamples = prop.getl("ScalarQuantizationNoOfSamples", scalarQuantizationNoOfSamples);
     maxMagnitude                  = prop.getf("MaxMagnitude", maxMagnitude);
     graphType                     = (GraphType)prop.getl("GraphType", graphType);
+    {
+      auto it = prop.find("OrderedSearchRanking");
+      if (it != prop.end()) {
+        orderedSearchRanking = (it->second == "True");
+      }
+    }
+    {
+      auto it = prop.find("TreeQuantization");
+      if (it != prop.end()) {
+        treeQuantization = (it->second == "True");
+      }
+    }
   }
 
   size_t getDataSize() {
@@ -1021,6 +1046,8 @@ class Property {
   size_t scalarQuantizationNoOfSamples;
   float maxMagnitude;
   GraphType graphType;
+  bool orderedSearchRanking;
+  bool treeQuantization;
 };
 
 #ifdef NGTQ_DISTANCE_ANGLE
@@ -1070,9 +1097,22 @@ class QuantizedObjectProcessingStream {
 #if defined(NGT_SHARED_MEMORY_ALLOCATOR)
     abort();
 #else
+#if !defined(NGT_REVISED_QUANTIZED_DISTANCE)
     size_t blkNo = dataNo / NGTQ_SIMD_BLOCK_SIZE;
     size_t oft   = dataNo - blkNo * NGTQ_SIMD_BLOCK_SIZE;
     stream[blkNo * alignedBlockSize + NGTQ_SIMD_BLOCK_SIZE * subvectorNo + oft] = quantizedObject;
+#else
+
+    size_t blkNo       = dataNo / NGTQ_SIMD_BLOCK_SIZE;
+    size_t nodeInGroup = dataNo % NGTQ_SIMD_BLOCK_SIZE;
+
+    size_t block       = nodeInGroup / 8;
+    size_t nodeInBlock = nodeInGroup % 8;
+
+    size_t nibbleIndex =
+        blkNo * alignedBlockSize + NGTQ_SIMD_BLOCK_SIZE * subvectorNo + block + nodeInBlock * 4;
+    stream[nibbleIndex] = quantizedObject;
+#endif
 #endif
   }
 
@@ -1103,10 +1143,12 @@ class QuantizedObjectProcessingStream {
   }
 #endif
 
+  size_t getUint4StreamSize() { return streamSize / 2; }
   uint8_t *compressIntoUint4() {
     size_t idx             = 0;
-    size_t uint4StreamSize = streamSize / 2;
-    uint8_t *uint4Objects  = new uint8_t[uint4StreamSize]();
+    size_t uint4StreamSize = getUint4StreamSize();
+    uint8_t *uint4Objects  = reinterpret_cast<uint8_t *>(NGT::alignedAlloc64(uint4StreamSize));
+    memset(uint4Objects, 0, uint4StreamSize);
     while (idx < streamSize) {
       for (size_t lidx = 0; lidx < numOfAlignedSubvectors; lidx++) {
         for (size_t bidx = 0; bidx < NGTQ_SIMD_BLOCK_SIZE; bidx++) {
@@ -1384,7 +1426,7 @@ class QuantizedObjectDistance {
     }
     void initialize(size_t numOfSubspaces, size_t localCodebookCentroidNo) {
       size_t numOfAlignedSubvectors = ((numOfSubspaces - 1) / NGTQ_BATCH_SIZE + 1) * NGTQ_BATCH_SIZE;
-      size                          = numOfAlignedSubvectors * localCodebookCentroidNo;
+      size                          = numOfAlignedSubvectors * (localCodebookCentroidNo - 1);
       localDistanceLookup           = new uint8_t[size];
       scales                        = new float[numOfAlignedSubvectors];
       offsets                       = new float[numOfAlignedSubvectors];
@@ -1401,8 +1443,13 @@ class QuantizedObjectDistance {
     float totalOffset;
     size_t range512;
     size_t range256;
+#ifdef NGT_REVISED_QUANTIZED_DISTANCE
+    static constexpr size_t step512 = 64;
+    static constexpr size_t step256 = 32;
+#else
     static constexpr size_t step512 = 32;
     static constexpr size_t step256 = 16;
+#endif
   };
 #ifdef NGT_IVI
   QuantizedObjectDistance(Quantizer &q) : quantizer(q) {}
@@ -1420,6 +1467,8 @@ class QuantizedObjectDistance {
 
   virtual double operator()(void *localID, DistanceLookupTable &distanceLUT) = 0;
 
+  virtual void operator()(void *inv, uint16_t *distances, size_t size, DistanceLookupTableUint8 &distanceLUT,
+                          void *query = 0) = 0;
 #ifdef NGTQBG_MIN
   virtual float operator()(void *inv, float *distances, size_t size, DistanceLookupTableUint8 &distanceLUT,
                            void *query = 0) = 0;
@@ -1787,17 +1836,25 @@ class QuantizedObjectDistance {
     }
 
 #ifdef NGTQ_TOTAL_SCALE_OFFSET_COMPRESSION
-    float min               = _mm512_reduce_min_ps(mmin);
-    float max               = _mm512_reduce_max_ps(mmax);
-    float offset            = min;
-    float scale             = (max - min) / 255.0;
+    float min    = _mm512_reduce_min_ps(mmin);
+    float max    = _mm512_reduce_max_ps(mmax);
+    float offset = min;
+    float scale  = (max - min) / 255.0;
+#ifdef NGT_REVISED_QUANTIZED_DISTANCE
+    constexpr int thresholdInt255 = 255;
+    const __m512i threshold255    = _mm512_set1_epi32(thresholdInt255);
+#endif
     distanceLUT.totalOffset = offset * static_cast<float>(localCodebookNo);
     auto *blutptr           = distanceLUT.localDistanceLookup;
     flutptr                 = &flut[0];
     for (size_t li = 0; li < localCodebookNo; li++) {
       __m512 v    = _mm512_div_ps(_mm512_sub_ps(*flutptr, _mm512_set1_ps(offset)), _mm512_set1_ps(scale));
       __m512i b4v = _mm512_cvtps_epi32(_mm512_roundscale_ps(v, _MM_FROUND_TO_NEAREST_INT));
-      __m128i b   = _mm512_cvtepi32_epi8(b4v);
+#ifdef NGT_REVISED_QUANTIZED_DISTANCE
+      __m128i b = _mm512_cvtepi32_epi8(_mm512_min_epi32(b4v, threshold255));
+#else
+      __m128i b = _mm512_cvtepi32_epi8(b4v);
+#endif
       _mm_storeu_si128((__m128i_u *)blutptr, b);
       flutptr++;
       blutptr += 16;
@@ -1880,6 +1937,10 @@ class QuantizedObjectDistance {
     }
     float offset = min;
     float scale  = (max - min) / 255.0;
+#ifdef NGT_REVISED_QUANTIZED_DISTANCE
+    constexpr int thresholdInt255 = 255;
+    const __m256i threshold255    = _mm256_set1_epi32(thresholdInt255);
+#endif
 
 #ifndef NGTQ_TOTAL_SCALE_OFFSET_COMPRESSION
     std::cerr << "Individual scale offset compression is not implemented." << std::endl;
@@ -1890,26 +1951,29 @@ class QuantizedObjectDistance {
     for (size_t li = 0; li < localCodebookNo; li++) {
       __m256 v    = _mm256_div_ps(_mm256_sub_ps(*flutptr++, _mm256_set1_ps(offset)), _mm256_set1_ps(scale));
       __m256i b4v = _mm256_cvtps_epi32(_mm256_round_ps(v, _MM_FROUND_TO_NEAREST_INT));
-      *blutptr++  = _mm256_extract_epi8(b4v, 0);
-      *blutptr++  = _mm256_extract_epi8(b4v, 4);
-      *blutptr++  = _mm256_extract_epi8(b4v, 8);
-      *blutptr++  = _mm256_extract_epi8(b4v, 12);
-      __m128i b   = _mm256_extracti128_si256(b4v, 1);
-      *blutptr++  = _mm_extract_epi8(b, 0);
-      *blutptr++  = _mm_extract_epi8(b, 4);
-      *blutptr++  = _mm_extract_epi8(b, 8);
-      *blutptr++  = _mm_extract_epi8(b, 12);
-      v           = _mm256_div_ps(_mm256_sub_ps(*flutptr++, _mm256_set1_ps(offset)), _mm256_set1_ps(scale));
-      b4v         = _mm256_cvtps_epi32(_mm256_round_ps(v, _MM_FROUND_TO_NEAREST_INT));
-      *blutptr++  = _mm256_extract_epi8(b4v, 0);
-      *blutptr++  = _mm256_extract_epi8(b4v, 4);
-      *blutptr++  = _mm256_extract_epi8(b4v, 8);
-      *blutptr++  = _mm256_extract_epi8(b4v, 12);
-      b           = _mm256_extracti128_si256(b4v, 1);
-      *blutptr++  = _mm_extract_epi8(b, 0);
-      *blutptr++  = _mm_extract_epi8(b, 4);
-      *blutptr++  = _mm_extract_epi8(b, 8);
-      *blutptr++  = _mm_extract_epi8(b, 12);
+#ifdef NGT_REVISED_QUANTIZED_DISTANCE
+      b4v = _mm256_min_epi32(b4v, threshold255);
+#endif
+      *blutptr++ = _mm256_extract_epi8(b4v, 0);
+      *blutptr++ = _mm256_extract_epi8(b4v, 4);
+      *blutptr++ = _mm256_extract_epi8(b4v, 8);
+      *blutptr++ = _mm256_extract_epi8(b4v, 12);
+      __m128i b  = _mm256_extracti128_si256(b4v, 1);
+      *blutptr++ = _mm_extract_epi8(b, 0);
+      *blutptr++ = _mm_extract_epi8(b, 4);
+      *blutptr++ = _mm_extract_epi8(b, 8);
+      *blutptr++ = _mm_extract_epi8(b, 12);
+      v          = _mm256_div_ps(_mm256_sub_ps(*flutptr++, _mm256_set1_ps(offset)), _mm256_set1_ps(scale));
+      b4v        = _mm256_cvtps_epi32(_mm256_round_ps(v, _MM_FROUND_TO_NEAREST_INT));
+      *blutptr++ = _mm256_extract_epi8(b4v, 0);
+      *blutptr++ = _mm256_extract_epi8(b4v, 4);
+      *blutptr++ = _mm256_extract_epi8(b4v, 8);
+      *blutptr++ = _mm256_extract_epi8(b4v, 12);
+      b          = _mm256_extracti128_si256(b4v, 1);
+      *blutptr++ = _mm_extract_epi8(b, 0);
+      *blutptr++ = _mm_extract_epi8(b, 4);
+      *blutptr++ = _mm_extract_epi8(b, 8);
+      *blutptr++ = _mm_extract_epi8(b, 12);
       distanceLUT.offsets[li] = offset;
       distanceLUT.scales[li]  = scale;
     }
@@ -1961,6 +2025,11 @@ class QuantizedObjectDistance {
     for (size_t li = 0; li < localCodebookNo; li++) {
       for (size_t k = 0; k < localCodebookCentroidNoSIMD; k++) {
         int32_t tmp = std::round((*flutptr - offset) / scale);
+#ifdef NGT_REVISED_QUANTIZED_DISTANCE
+        if (tmp > 255) {
+          tmp = 255;
+        }
+#endif
         assert(tmp >= 0 && tmp <= 255);
         *blutptr++ = static_cast<uint8_t>(tmp);
         flutptr++;
@@ -2095,11 +2164,13 @@ class QuantizedObjectDistance {
 
   void initialize(DistanceLookupTableUint8 &c) { c.initialize(localCodebookNo, localCodebookCentroidNo); }
 
-  virtual uint8_t *generateRearrangedObjects(NGTQ::InvertedIndexEntry<uint16_t> &invertedIndexObjects)    = 0;
+  virtual uint8_t *generateRearrangedObjects(NGTQ::InvertedIndexEntry<uint16_t> &invertedIndexObjects,
+                                             size_t *size = nullptr) = 0;
   virtual void restoreIntoInvertedIndex(NGTQ::InvertedIndexEntry<uint16_t> &invertedIndexObjects,
-                                        size_t numOfSubspaces, std::vector<uint32_t> &ids, void *objects) = 0;
-  virtual size_t getNumOfAlignedObjects(size_t noOfObjects)                                               = 0;
-  virtual size_t getSizeOfCluster(size_t noOfObjects)                                                     = 0;
+                                        size_t numOfSubspaces, size_t nOfObjects, uint32_t *ids,
+                                        void *objects)               = 0;
+  virtual size_t getNumOfAlignedObjects(size_t noOfObjects)          = 0;
+  virtual size_t getSizeOfCluster(size_t noOfObjects)                = 0;
 
   NGT::Index *globalCodebookIndex;
   NGT::Index *localCodebookIndexes;
@@ -2219,6 +2290,9 @@ template <typename T> class QuantizedObjectDistanceUint8 : public QuantizedObjec
     abort();
   }
 
+  inline void operator()(void *inv, uint16_t *distances, size_t size, DistanceLookupTableUint8 &distanceLUT,
+                         void *query = 0) {}
+
 #ifdef NGTQBG_MIN
   inline float operator()(void *inv, float *distances, size_t size, DistanceLookupTableUint8 &distanceLUT,
                           void *query, std::vector<uint32_t> &queryList){
@@ -2231,7 +2305,7 @@ template <typename T> class QuantizedObjectDistanceUint8 : public QuantizedObjec
 }
 
 uint8_t *
-generateRearrangedObjects(NGTQ::InvertedIndexEntry<uint16_t> &invertedIndexObjects) {
+generateRearrangedObjects(NGTQ::InvertedIndexEntry<uint16_t> &invertedIndexObjects, size_t *size = 0) {
   NGTThrowException("Not implemented");
 #ifdef NGTQ_QBG
   QuantizedObjectProcessingStream quantizedStream(invertedIndexObjects.numOfSubvectors,
@@ -2243,7 +2317,7 @@ generateRearrangedObjects(NGTQ::InvertedIndexEntry<uint16_t> &invertedIndexObjec
 #endif
 }
 void restoreIntoInvertedIndex(NGTQ::InvertedIndexEntry<uint16_t> &invertedIndexObjects, size_t numOfSubspaces,
-                              std::vector<uint32_t> &ids, void *objects) {
+                              size_t nOfObjects, uint32_t *ids, void *objects) {
   NGTThrowException("Not implemented");
 }
 size_t getNumOfAlignedObjects(size_t noOfObjects) {
@@ -2327,6 +2401,272 @@ template <typename T> class QuantizedObjectDistanceFloat : public QuantizedObjec
 
 #if defined(NGTQG_AVX512) || defined(NGTQG_AVX2)
 #if defined(NGTQ_TOTAL_SCALE_OFFSET_COMPRESSION)
+
+#ifdef NGT_REVISED_QUANTIZED_DISTANCE
+  void operator()(void *inv, uint16_t *distances, size_t noOfObjects, DistanceLookupTableUint8 &distanceLUT,
+                  void *query = 0) {
+
+#if defined(NGTQG_AVX512) && defined(__AVX512F__) && defined(__AVX512BW__)
+    uint8_t *localID         = reinterpret_cast<uint8_t *>(inv);
+    uint8_t *lut             = distanceLUT.localDistanceLookup;
+    const size_t range256    = distanceLUT.range256;
+    const size_t range512    = distanceLUT.range512;
+    const size_t step512     = distanceLUT.step512;
+    const size_t tableSize   = distanceLUT.size;
+    const size_t prefetchOft = step512 << 4;
+
+    size_t blocksPerObj        = (tableSize >> 5);
+    size_t totalSize           = blocksPerObj * noOfObjects;
+    int outerLoops             = (range256 - 1 + totalSize) / range256;
+    constexpr size_t lutStride = 16 * 4;
+
+    const __m512i mask512x0F = _mm512_set1_epi32(0x0F0F0F0F);
+
+    uint8_t *dists = reinterpret_cast<uint8_t *>(distances);
+    for (int obj = 0; obj < outerLoops; obj++) {
+      __m512i upperA         = _mm512_setzero_si512();
+      __m512i upperB         = _mm512_setzero_si512();
+      __m512i lowerA         = _mm512_setzero_si512();
+      __m512i lowerB         = _mm512_setzero_si512();
+      uint8_t *lutPtr        = lut;
+      uint8_t *quantPtr      = localID;
+      uint8_t *quantEndInner = localID + range512;
+
+      while (quantPtr < quantEndInner) {
+        __m512i packed = _mm512_loadu_si512(reinterpret_cast<const __m512i *>(quantPtr));
+        _mm_prefetch(reinterpret_cast<const char *>(quantPtr + prefetchOft), _MM_HINT_T0);
+        __m512i upper4bit = _mm512_srli_epi16(packed, 4);
+        __m512i lower4bit = _mm512_and_si512(packed, mask512x0F);
+        upper4bit         = _mm512_and_si512(upper4bit, mask512x0F);
+
+        __m512i lookupTable = _mm512_loadu_si512(reinterpret_cast<const __m512i *>(lutPtr));
+        lutPtr += lutStride;
+        _mm_prefetch(reinterpret_cast<const char *>(lutPtr), _MM_HINT_T0);
+
+        __m512i resultLower = _mm512_shuffle_epi8(lookupTable, lower4bit);
+        __m512i resultUpper = _mm512_shuffle_epi8(lookupTable, upper4bit);
+        __m512i accLowerB   = _mm512_add_epi16(lowerB, resultLower);
+        __m512i upperByteB  = _mm512_srli_epi16(resultLower, 8);
+        __m512i accUpperB   = _mm512_add_epi16(upperB, upperByteB);
+
+        __m512i accLowerA  = _mm512_add_epi16(lowerA, resultUpper);
+        __m512i upperByteA = _mm512_srli_epi16(resultUpper, 8);
+        __m512i accUpperA  = _mm512_add_epi16(upperA, upperByteA);
+
+        quantPtr += step512;
+
+        lowerB = accLowerB;
+        upperB = accUpperB;
+        lowerA = accLowerA;
+        upperA = accUpperA;
+      }
+
+      __m512i correctionB = _mm512_slli_epi16(upperB, 8);
+      lowerB              = _mm512_sub_epi16(lowerB, correctionB);
+
+      __m512i correctionA = _mm512_slli_epi16(upperA, 8);
+      lowerA              = _mm512_sub_epi16(lowerA, correctionA);
+      __m256i v256 = _mm256_add_epi16(_mm512_castsi512_si256(upperB), _mm512_extracti64x4_epi64(upperB, 1));
+      __m128i upperB256 = _mm_add_epi16(_mm256_castsi256_si128(v256), _mm256_extracti128_si256(v256, 1));
+
+      v256 = _mm256_add_epi16(_mm512_castsi512_si256(upperA), _mm512_extracti64x4_epi64(upperA, 1));
+      __m128i upperA256 = _mm_add_epi16(_mm256_castsi256_si128(v256), _mm256_extracti128_si256(v256, 1));
+
+      v256 = _mm256_add_epi16(_mm512_castsi512_si256(lowerB), _mm512_extracti64x4_epi64(lowerB, 1));
+      __m128i lowerB256 = _mm_add_epi16(_mm256_castsi256_si128(v256), _mm256_extracti128_si256(v256, 1));
+
+      v256 = _mm256_add_epi16(_mm512_castsi512_si256(lowerA), _mm512_extracti64x4_epi64(lowerA, 1));
+      __m128i lowerA256 = _mm_add_epi16(_mm256_castsi256_si128(v256), _mm256_extracti128_si256(v256, 1));
+
+      _mm_storeu_si128(reinterpret_cast<__m128i *>(dists + 0x00), lowerB256);
+      _mm_storeu_si128(reinterpret_cast<__m128i *>(dists + 0x10), lowerA256);
+      _mm_storeu_si128(reinterpret_cast<__m128i *>(dists + 0x20), upperB256);
+      _mm_storeu_si128(reinterpret_cast<__m128i *>(dists + 0x30), upperA256);
+      dists += 0x40;
+      localID += range512;
+    }
+
+#elif defined(__AVX2__)
+    uint8_t *localID       = reinterpret_cast<uint8_t *>(inv);
+    uint8_t *lut           = distanceLUT.localDistanceLookup;
+    const size_t range256  = distanceLUT.range256;
+    const size_t range512  = distanceLUT.range512;
+    const size_t step512   = distanceLUT.step512;
+    const size_t tableSize = distanceLUT.size;
+
+    size_t blocksPerObj = (tableSize >> 5);
+    size_t totalSize    = blocksPerObj * noOfObjects;
+    int outerLoops      = (range256 - 1 + totalSize) / range256;
+
+    constexpr size_t lutStride256 = 16 * 2;
+    constexpr size_t step256      = 32;
+
+    const __m256i mask256x0F = _mm256_set1_epi32(0x0F0F0F0F);
+
+    uint8_t *dists = reinterpret_cast<uint8_t *>(distances);
+
+    for (int obj = 0; obj < outerLoops; obj++) {
+      __m256i upperA = _mm256_setzero_si256();
+      __m256i upperB = _mm256_setzero_si256();
+      __m256i lowerA = _mm256_setzero_si256();
+      __m256i lowerB = _mm256_setzero_si256();
+
+      uint8_t *lutPtr        = lut;
+      uint8_t *quantPtr      = localID;
+      uint8_t *quantEndInner = localID + range512;
+
+      while (quantPtr < quantEndInner) {
+        __m256i packed = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(quantPtr));
+        _mm_prefetch(reinterpret_cast<const char *>(quantPtr + step256 * 8), _MM_HINT_T0);
+
+        __m256i upper4bit = _mm256_srli_epi16(packed, 4);
+        __m256i lower4bit = _mm256_and_si256(packed, mask256x0F);
+        upper4bit         = _mm256_and_si256(upper4bit, mask256x0F);
+
+        __m256i lookupTable = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(lutPtr));
+        lutPtr += lutStride256;
+        _mm_prefetch(reinterpret_cast<const char *>(lutPtr), _MM_HINT_T0);
+
+        __m256i resultLower = _mm256_shuffle_epi8(lookupTable, lower4bit);
+        __m256i resultUpper = _mm256_shuffle_epi8(lookupTable, upper4bit);
+
+        __m256i accLowerB = _mm256_add_epi16(lowerB, resultLower);
+        __m256i accLowerA = _mm256_add_epi16(lowerA, resultUpper);
+
+        __m256i upperByteB = _mm256_srli_epi16(resultLower, 8);
+        __m256i upperByteA = _mm256_srli_epi16(resultUpper, 8);
+
+        __m256i accUpperB = _mm256_add_epi16(upperB, upperByteB);
+        __m256i accUpperA = _mm256_add_epi16(upperA, upperByteA);
+
+        quantPtr += step256;
+
+        lowerB = accLowerB;
+        upperB = accUpperB;
+        lowerA = accLowerA;
+        upperA = accUpperA;
+      }
+
+      __m256i correctionB = _mm256_slli_epi16(upperB, 8);
+      lowerB              = _mm256_sub_epi16(lowerB, correctionB);
+
+      __m256i correctionA = _mm256_slli_epi16(upperA, 8);
+      lowerA              = _mm256_sub_epi16(lowerA, correctionA);
+
+      __m128i upperB128 = _mm_add_epi16(_mm256_castsi256_si128(upperB), _mm256_extracti128_si256(upperB, 1));
+      __m128i upperA128 = _mm_add_epi16(_mm256_castsi256_si128(upperA), _mm256_extracti128_si256(upperA, 1));
+      __m128i lowerB128 = _mm_add_epi16(_mm256_castsi256_si128(lowerB), _mm256_extracti128_si256(lowerB, 1));
+      __m128i lowerA128 = _mm_add_epi16(_mm256_castsi256_si128(lowerA), _mm256_extracti128_si256(lowerA, 1));
+
+      _mm_storeu_si128(reinterpret_cast<__m128i *>(dists + 0x00), lowerB128);
+      _mm_storeu_si128(reinterpret_cast<__m128i *>(dists + 0x10), lowerA128);
+      _mm_storeu_si128(reinterpret_cast<__m128i *>(dists + 0x20), upperB128);
+      _mm_storeu_si128(reinterpret_cast<__m128i *>(dists + 0x30), upperA128);
+
+      dists += 0x40;
+      localID += range512;
+    }
+#else
+#error "AVX2 or AVX512 required for NGT_REVISED_QUANTIZED_DISTANCE"
+#endif
+  }
+
+#else
+  inline void operator()(void *inv, uint16_t *distances, size_t noOfObjects,
+                         DistanceLookupTableUint8 &distanceLUT, void *query = 0) {
+
+    uint8_t *localID = static_cast<uint8_t *>(inv);
+    uint16_t *d      = distances;
+#if defined(NGTQG_AVX512)
+    const __m512i mask512x0F = _mm512_set1_epi16(0x000f);
+    const __m512i mask512xF0 = _mm512_set1_epi16(0x00f0);
+    const size_t range512    = distanceLUT.range512;
+    auto step512             = distanceLUT.step512;
+#endif
+    const __m256i mask256x0F = _mm256_set1_epi16(0x000f);
+    const __m256i mask256xF0 = _mm256_set1_epi16(0x00f0);
+    const size_t range256    = distanceLUT.range256;
+    auto step256             = distanceLUT.step256;
+    auto *last               = localID + range256 / NGTQ_SIMD_BLOCK_SIZE * noOfObjects;
+    while (localID < last) {
+      uint8_t *lut       = distanceLUT.localDistanceLookup;
+      auto *lastgroup256 = localID + range256;
+#if defined(NGTQG_AVX512)
+      __m512i depu16     = _mm512_setzero_si512();
+      auto *lastgroup512 = localID + range512;
+      while (localID < lastgroup512) {
+        __m512i lookupTable = _mm512_loadu_si512((__m512i const *)lut);
+        _mm_prefetch(&localID[0] + 64 * 8, _MM_HINT_T0);
+        __m512i packedobj = _mm512_cvtepu8_epi16(_mm256_loadu_si256((__m256i const *)&localID[0]));
+        __m512i lo        = _mm512_and_si512(packedobj, mask512x0F);
+        __m512i hi        = _mm512_slli_epi16(_mm512_and_si512(packedobj, mask512xF0), 4);
+        __m512i obj       = _mm512_or_si512(lo, hi);
+        __m512i vtmp      = _mm512_shuffle_epi8(lookupTable, obj);
+        depu16 = _mm512_adds_epu16(depu16, _mm512_cvtepu8_epi16(_mm512_extracti64x4_epi64(vtmp, 0)));
+        depu16 = _mm512_adds_epu16(depu16, _mm512_cvtepu8_epi16(_mm512_extracti64x4_epi64(vtmp, 1)));
+        lut += (localCodebookCentroidNo - 1) * 4;
+        localID += step512;
+      }
+#else
+      __m256i depu16l = _mm256_setzero_si256();
+      __m256i depu16h = _mm256_setzero_si256();
+#endif
+      while (localID < lastgroup256) {
+        __m256i lookupTable = _mm256_loadu_si256((__m256i const *)lut);
+        _mm_prefetch(&localID[0] + 64 * 8, _MM_HINT_T0);
+        __m256i packedobj = _mm256_cvtepu8_epi16(_mm_loadu_si128((__m128i const *)&localID[0]));
+        __m256i lo        = _mm256_and_si256(packedobj, mask256x0F);
+        __m256i hi        = _mm256_slli_epi16(_mm256_and_si256(packedobj, mask256xF0), 4);
+        __m256i obj       = _mm256_or_si256(lo, hi);
+        __m256i vtmp      = _mm256_shuffle_epi8(lookupTable, obj);
+
+#if defined(NGTQG_AVX512)
+        depu16 = _mm512_adds_epu16(depu16, _mm512_cvtepu8_epi16(vtmp));
+#else
+        depu16l = _mm256_adds_epu16(depu16l, _mm256_cvtepu8_epi16(_mm256_extractf128_si256(vtmp, 0)));
+        depu16h = _mm256_adds_epu16(depu16h, _mm256_cvtepu8_epi16(_mm256_extractf128_si256(vtmp, 1)));
+#endif
+        lut += (localCodebookCentroidNo - 1) * 2;
+        localID += step256;
+      }
+#if defined(NGTQG_AVX512)
+      __m256i lo       = _mm512_extracti64x4_epi64(depu16, 0);
+      __m256i hi       = _mm512_extracti64x4_epi64(depu16, 1);
+      __m256i distance = _mm256_add_epi16(lo, hi);
+      _mm256_storeu_si256((__m256i_u *)d, distance);
+#else
+      __m256i lol      = _mm256_cvtepu16_epi32(_mm256_extractf128_si256(depu16l, 0));
+      __m256i loh      = _mm256_cvtepu16_epi32(_mm256_extractf128_si256(depu16l, 1));
+      __m256i hil      = _mm256_cvtepu16_epi32(_mm256_extractf128_si256(depu16h, 0));
+      __m256i hih      = _mm256_cvtepu16_epi32(_mm256_extractf128_si256(depu16h, 1));
+      __m256 distancel = _mm256_cvtepi32_ps(_mm256_add_epi32(lol, hil));
+      __m256 distanceh = _mm256_cvtepi32_ps(_mm256_add_epi32(loh, hih));
+      __m256 scalel    = _mm256_broadcastss_ps(*reinterpret_cast<__m128 *>(&distanceLUT.scales[0]));
+      __m256 scaleh    = _mm256_broadcastss_ps(*reinterpret_cast<__m128 *>(&distanceLUT.scales[0]));
+      distancel        = _mm256_mul_ps(distancel, scalel);
+      distancel        = _mm256_add_ps(distancel, _mm256_set1_ps(distanceLUT.totalOffset));
+      distanceh        = _mm256_mul_ps(distanceh, scaleh);
+      distanceh        = _mm256_add_ps(distanceh, _mm256_set1_ps(distanceLUT.totalOffset));
+#if defined(NGTQG_DOT_PRODUCT)
+      float one = 1.0;
+      float two = 2.0;
+      distancel =
+          _mm256_mul_ps(_mm256_sub_ps(_mm256_broadcastss_ps(*reinterpret_cast<__m128 *>(&one)), distancel),
+                        _mm256_broadcastss_ps(*reinterpret_cast<__m128 *>(&two)));
+      distanceh =
+          _mm256_mul_ps(_mm256_sub_ps(_mm256_broadcastss_ps(*reinterpret_cast<__m128 *>(&one)), distanceh),
+                        _mm256_broadcastss_ps(*reinterpret_cast<__m128 *>(&two)));
+#endif
+      distancel = _mm256_sqrt_ps(distancel);
+      distanceh = _mm256_sqrt_ps(distanceh);
+      _mm256_storeu_ps(d, distancel);
+      _mm256_storeu_ps(d + 8, distanceh);
+#endif
+      d += 16;
+    }
+  }
+#endif
+
 #ifdef NGTQBG_MIN
   inline float operator()(void *inv, float *distances, size_t noOfObjects,
                           DistanceLookupTableUint8 &distanceLUT, void *query = 0) {
@@ -2546,7 +2886,6 @@ template <typename T> class QuantizedObjectDistanceFloat : public QuantizedObjec
         d            = _mm512_cvtepi32_ps(_mm512_cvtepu8_epi32(_mm256_extracti32x4_epi32(vtmp, 1)));
         scale        = _mm512_broadcastss_ps(*reinterpret_cast<__m128 *>(&scales[1]));
         distance     = _mm512_add_ps(distance, _mm512_mul_ps(d, scale));
-        ////////////////////
 #else
         depu16l = _mm256_adds_epu16(depu16l, _mm256_cvtepu8_epi16(_mm256_extractf128_si256(vtmp, 0)));
         depu16h = _mm256_adds_epu16(depu16h, _mm256_cvtepu8_epi16(_mm256_extractf128_si256(vtmp, 1)));
@@ -2621,6 +2960,12 @@ template <typename T> class QuantizedObjectDistanceFloat : public QuantizedObjec
 #endif
 
 #else
+  inline void operator()(void *inv, uint16_t *distances, size_t size, DistanceLookupTableUint8 &distanceLUT,
+                         void *query = 0) {
+    std::cerr << "operator() not implemented. (A)" << std::endl;
+    abort();
+  }
+
 #ifdef NGTQBG_MIN
   inline float operator()(void *inv, float *distances, size_t size, DistanceLookupTableUint8 &distanceLUT,
                           void *query = 0) {
@@ -2760,7 +3105,8 @@ template <typename T> class QuantizedObjectDistanceFloat : public QuantizedObjec
   }
 #endif
 
-  uint8_t *generateRearrangedObjects(NGTQ::InvertedIndexEntry<uint16_t> &invertedIndexObjects) {
+  uint8_t *generateRearrangedObjects(NGTQ::InvertedIndexEntry<uint16_t> &invertedIndexObjects,
+                                     size_t *size = nullptr) {
     if (invertedIndexObjects.numOfSubvectors != localDivisionNo) {
       std::stringstream msg;
       msg << "Internal fatal error. Invalid # of subvectos. " << invertedIndexObjects.numOfSubvectors << ":"
@@ -2771,15 +3117,18 @@ template <typename T> class QuantizedObjectDistanceFloat : public QuantizedObjec
     QuantizedObjectProcessingStream quantizedStream(invertedIndexObjects.numOfSubvectors,
                                                     invertedIndexObjects.size());
     quantizedStream.arrange(invertedIndexObjects);
+    if (size != nullptr) {
+      *size = quantizedStream.getUint4StreamSize();
+    }
     return quantizedStream.compressIntoUint4();
 #else
     return 0;
 #endif
   }
   void restoreIntoInvertedIndex(NGTQ::InvertedIndexEntry<uint16_t> &invertedIndexObjects,
-                                size_t numOfSubspaces, std::vector<uint32_t> &ids, void *objects) {
+                                size_t numOfSubspaces, size_t nOfObjects, uint32_t *ids, void *objects) {
 #ifdef NGTQ_QBG
-    NGTQ::QuantizedObjectProcessingStream quantizedStream(numOfSubspaces, ids.size());
+    NGTQ::QuantizedObjectProcessingStream quantizedStream(numOfSubspaces, nOfObjects);
     quantizedStream.uncompressFromUint4(static_cast<uint8_t *>(objects));
     invertedIndexObjects.initialize(numOfSubspaces);
     quantizedStream.restoreToInvertedIndex(invertedIndexObjects);
@@ -2796,11 +3145,13 @@ template <typename T> class QuantizedObjectDistanceFloat : public QuantizedObjec
 #endif
 };
 
+#ifdef NGT_IVI
 class NonLocalQuantizedObjectDistance : public QuantizedObjectDistance {
  public:
   NonLocalQuantizedObjectDistance(Quantizer &q) : QuantizedObjectDistance(q) {}
   virtual void restoreIntoInvertedIndex(NGTQ::InvertedIndexEntry<uint16_t> &invertedIndexObjects,
-                                        size_t numOfSubspaces, std::vector<uint32_t> &ids, void *objects) {
+                                        size_t numOfSubspaces, size_t nOfObjects, uint32_t *ids,
+                                        void *objects) {
 #ifdef NGTQ_QBG
     invertedIndexObjects.initialize(0);
     for (auto &id : ids) {
@@ -2812,14 +3163,13 @@ class NonLocalQuantizedObjectDistance : public QuantizedObjectDistance {
   }
 };
 
-#ifdef NGT_IVI
-///////////////////////////////////////////////
 template <typename T> class NonQuantizedObjectDistance : public NonLocalQuantizedObjectDistance {
  public:
   NonQuantizedObjectDistance(Quantizer &q) : NonLocalQuantizedObjectDistance(q) {}
   inline double operator()(void *l, DistanceLookupTable &distanceLUT) { return 0.0; }
 
-  ///-/ 近似距離計算 /////////////////////////////
+  inline void operator()(void *inv, uint16_t *distances, size_t noOfObjects,
+                         DistanceLookupTableUint8 &distanceLUT, void *query = 0) {}
 #ifdef NGTQBG_MIN
   inline float operator()(void *inv, float *distances, size_t noOfObjects,
                           DistanceLookupTableUint8 &distanceLUT, void *query = 0) {
@@ -2876,7 +3226,8 @@ template <typename T> class NonQuantizedObjectDistance : public NonLocalQuantize
 
   void createDistanceLookup(void *objectPtr, size_t objectID, DistanceLookupTableUint8 &distanceLUT) {}
 
-  uint8_t *generateRearrangedObjects(NGTQ::InvertedIndexEntry<uint16_t> &invertedIndexObjects) {
+  uint8_t *generateRearrangedObjects(NGTQ::InvertedIndexEntry<uint16_t> &invertedIndexObjects,
+                                     size_t *size = nullptr) {
     if (invertedIndexObjects.numOfSubvectors != localDivisionNo) {
       std::stringstream msg;
       msg << "Internal fatal error. Invalid # of subvectos. " << invertedIndexObjects.numOfSubvectors << ":"
@@ -2889,7 +3240,7 @@ template <typename T> class NonQuantizedObjectDistance : public NonLocalQuantize
     return processingStream.getStream();
   }
   void restoreIntoInvertedIndex(NGTQ::InvertedIndexEntry<uint16_t> &invertedIndexObjects,
-                                size_t numOfSubspaces, std::vector<uint32_t> &ids, void *objects) {
+                                size_t numOfSubspaces, size_t nOfObjects, uint32_t *ids, void *objects) {
 #ifdef NGTQ_QBG
     invertedIndexObjects.initialize(0);
     for (auto id : ids) {
@@ -2917,7 +3268,8 @@ class ScalarQuantizedInt8ObjectDistance : public NonLocalQuantizedObjectDistance
 
   inline double operator()(void *l, DistanceLookupTable &distanceLUT) { return 0.0; }
 
-  ///-/ 近似距離計算 /////////////////////////////
+  inline void operator()(void *inv, uint16_t *distances, size_t noOfObjects,
+                         DistanceLookupTableUint8 &distanceLUT, void *query) {}
 #ifdef NGTQBG_MIN
   inline float operator()(void *inv, float *distances, size_t noOfObjects,
                           DistanceLookupTableUint8 &distanceLUT, void *query) {
@@ -3010,7 +3362,8 @@ class ScalarQuantizedInt8ObjectDistance : public NonLocalQuantizedObjectDistance
   void createDistanceLookup(void *objectPtr, size_t objectID, DistanceLookupTable &distanceLUT) {}
   void createDistanceLookup(void *objectPtr, size_t objectID, DistanceLookupTableUint8 &distanceLUT) {}
 
-  uint8_t *generateRearrangedObjects(NGTQ::InvertedIndexEntry<uint16_t> &invertedIndexObjects) {
+  uint8_t *generateRearrangedObjects(NGTQ::InvertedIndexEntry<uint16_t> &invertedIndexObjects,
+                                     size_t *size = nullptr) {
     ScalarQuantizedInt8ObjectProcessingStream processingStream(localDivisionNo, invertedIndexObjects.size(),
                                                                &typeid(QT), quantizer);
     processingStream.arrange(invertedIndexObjects);
@@ -3778,7 +4131,7 @@ template <typename LOCAL_ID_TYPE> class QuantizerInstance : public Quantizer {
       }
     }
 #endif
-    Rotation *r = (readOnly && rotation.isIdentity()) ? 0 : &rotation;
+    Rotation *r = (readOnly && rotation.isIdentity()) ? nullptr : &rotation;
     quantizedObjectDistance->set(&globalCodebookIndex, localCodebookIndexes.data(), &quantizationCodebook,
                                  property.localDivisionNo, property.getLocalCodebookNo(), sizeoftype,
                                  property.dimension, r);
@@ -5916,9 +6269,7 @@ class Index {
       NGTThrowException("NGTQ::Index: Cannot get quantizer.");
     }
     try {
-      quantizer->open(index, globalProperty,
-                      property.quantizerType == NGTQ::QuantizerTypeQBG ? readOnly : false,
-                      refinementDataType);
+      quantizer->open(index, globalProperty, readOnly, refinementDataType);
     } catch (NGT::Exception &err) {
       delete quantizer;
       throw err;

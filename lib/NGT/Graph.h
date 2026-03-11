@@ -305,6 +305,12 @@ class NeighborhoodGraph {
 
   enum EpsilonType { EpsilonTypeNone = 0, EpsilonTypeByQuery = 1, EpsilonTypeResultSize = 2 };
 
+  enum IdenticalObjectEdgeType {
+    IdenticalObjectEdgeTypeNone           = 0,
+    IdenticalObjectEdgeTypeDirectedEdge   = 1,
+    IdenticalObjectEdgeTypeUndirectedEdge = 2,
+  };
+
 #ifdef NGT_GRAPH_READ_ONLY_GRAPH
   class Search {
    public:
@@ -313,6 +319,7 @@ class NeighborhoodGraph {
                                           NGT::ObjectDistances &) {
       if (size < 5000000) {
         switch (otype) {
+        case NGT::ObjectSpace::ObjectTypeUnset:
         case NGT::ObjectSpace::Float:
           switch (dtype) {
           case NGT::ObjectSpace::DistanceTypeNormalizedCosine: return normalizedCosineSimilarityFloat;
@@ -602,6 +609,7 @@ class NeighborhoodGraph {
       outgoingEdge               = 10;
       incomingEdge               = 80;
       epsilonType                = EpsilonTypeNone;
+      identicalObjectEdgeType    = IdenticalObjectEdgeTypeNone;
     }
     void clear() {
       truncationThreshold        = -1;
@@ -620,6 +628,7 @@ class NeighborhoodGraph {
       outgoingEdge               = -1;
       incomingEdge               = -1;
       epsilonType                = -1;
+      identicalObjectEdgeType    = -1;
     }
     void set(NGT::Property &prop);
     void get(NGT::Property &prop);
@@ -666,6 +675,15 @@ class NeighborhoodGraph {
       case EpsilonTypeByQuery: p.set("EpsilonType", "ByQuery"); break;
       case EpsilonTypeResultSize: p.set("EpsilonType", "ResultSize"); break;
       default: std::cerr << "Fatal error. Invalid epsilon type. " << epsilonType << std::endl; abort();
+      }
+      switch (identicalObjectEdgeType) {
+      case IdenticalObjectEdgeTypeNone: p.set("IdenticalObjectEdgeType", "None"); break;
+      case IdenticalObjectEdgeTypeDirectedEdge: p.set("IdenticalObjectEdgeType", "DirectedEdge"); break;
+      case IdenticalObjectEdgeTypeUndirectedEdge: p.set("IdenticalObjectEdgeType", "UndirectedEdge"); break;
+      default:
+        std::cerr << "Fatal error. Invalid identical object edge type. " << identicalObjectEdgeType
+                  << std::endl;
+        abort();
       }
     }
     void importProperty(NGT::PropertySet &p) {
@@ -736,6 +754,21 @@ class NeighborhoodGraph {
         std::cerr << "Not found \"EpsilonType\"" << std::endl;
         epsilonType = EpsilonTypeNone;
       }
+      it = p.find("IdenticalObjectEdgeType");
+      if (it != p.end()) {
+        if (it->second == "None") {
+          identicalObjectEdgeType = IdenticalObjectEdgeTypeNone;
+        } else if (it->second == "DirectedEdge") {
+          identicalObjectEdgeType = IdenticalObjectEdgeTypeDirectedEdge;
+        } else if (it->second == "UndirectedEdge") {
+          identicalObjectEdgeType = IdenticalObjectEdgeTypeUndirectedEdge;
+        } else {
+          std::cerr << "Invalid Identical Object Edge Type in the property. " << it->first << ":"
+                    << it->second << std::endl;
+        }
+      } else {
+        identicalObjectEdgeType = IdenticalObjectEdgeTypeNone;
+      }
     }
     friend std::ostream &operator<<(std::ostream &os, const Property &p) {
       os << "truncationThreshold=" << p.truncationThreshold << std::endl;
@@ -754,6 +787,7 @@ class NeighborhoodGraph {
       os << "outgoingEdge=" << p.outgoingEdge << std::endl;
       os << "incomingEdge=" << p.incomingEdge << std::endl;
       os << "epsilonType=" << p.epsilonType << std::endl;
+      os << "identicalObjectEdgeType=" << p.identicalObjectEdgeType << std::endl;
       return os;
     }
 
@@ -773,6 +807,7 @@ class NeighborhoodGraph {
     int16_t outgoingEdge;
     int16_t incomingEdge;
     int16_t epsilonType;
+    int16_t identicalObjectEdgeType;
   };
 
   NeighborhoodGraph() : objectSpace(0) {
@@ -790,6 +825,12 @@ class NeighborhoodGraph {
   void insertNode(ObjectID id, ObjectDistances &objects) {
     switch (property.graphType) {
     case GraphTypeANNG:
+      if (property.identicalObjectEdgeType == IdenticalObjectEdgeTypeNone) {
+        insertANNGNode(id, objects);
+      } else {
+        insertANNGNodeForIdenticalObjects(id, objects);
+      }
+      break;
     case GraphTypeRANNG: insertANNGNode(id, objects); break;
     case GraphTypeIANNG:
     case GraphTypeRIANNG: insertIANNGNode(id, objects); break;
@@ -863,6 +904,111 @@ class NeighborhoodGraph {
     return;
   }
 
+  void filterDuplicatesInResults(ObjectDistances &results) {
+    if (results.size() <= 1) {
+      return;
+    }
+    ObjectDistances filtered;
+    size_t i = 0;
+    while (i < results.size()) {
+      float currentDistance = results[i].distance;
+
+      size_t j = i + 1;
+      while (j < results.size() && results[j].distance == currentDistance) {
+        j++;
+      }
+
+      if (j - i == 1) {
+        filtered.push_back(results[i]);
+      } else {
+        std::vector<std::tuple<NGT::Object *, ObjectID, int32_t>> groups;
+
+        for (size_t k = i; k < j; k++) {
+#ifdef NGT_SHARED_MEMORY_ALLOCATOR
+          NGT::Object *obj = objectSpace->allocateObject(*getObjectRepository().get(results[k].id));
+#else
+          auto *obj = getObjectRepository().get(results[k].id);
+#endif
+          int32_t edges = getNode(results[k].id)->size();
+          bool found    = false;
+
+          for (auto &g : groups) {
+            if (objectSpace->compareWithL1(*std::get<0>(g), *obj) == 0.0) {
+              if (edges > std::get<2>(g)) {
+                std::get<1>(g) = results[k].id;
+                std::get<2>(g) = edges;
+              }
+              found = true;
+              break;
+            }
+          }
+
+          if (!found) {
+            groups.emplace_back(obj, results[k].id, edges);
+          }
+        }
+
+        for (auto &g : groups) {
+          filtered.push_back(ObjectDistance(std::get<1>(g), currentDistance));
+        }
+#ifdef NGT_SHARED_MEMORY_ALLOCATOR
+        for (auto &g : groups) {
+          objectSpace->deleteObject(std::get<0>(g));
+        }
+#endif
+      }
+
+      i = j;
+    }
+    results = std::move(filtered);
+  }
+
+  void insertANNGNodeForIdenticalObjects(ObjectID id, ObjectDistances &results) {
+    filterDuplicatesInResults(results);
+    if (results.size() == 0 || results[0].distance != 0.0) {
+      insertANNGNode(id, results);
+      return;
+    }
+#ifdef NGT_SHARED_MEMORY_ALLOCATOR
+    NGT::Object *insertedObj = objectSpace->allocateObject(*getObjectRepository().get(id));
+#else
+    NGT::Object *insertedObj = getObjectRepository().get(id);
+#endif
+    auto *firstResultObj = getObjectRepository().get(results[0].id);
+    if (objectSpace->compareWithL1(*insertedObj, *firstResultObj) != 0.0) {
+#ifdef NGT_SHARED_MEMORY_ALLOCATOR
+      objectSpace->deleteObject(insertedObj);
+#endif
+      insertANNGNode(id, results);
+      return;
+    }
+    int32_t max    = -1;
+    ObjectID maxid = 0;
+    for (ObjectDistances::iterator ri = results.begin(); ri != results.end(); ri++) {
+      auto *resultObj = getObjectRepository().get((*ri).id);
+      if (objectSpace->compareWithL1(*insertedObj, *resultObj) != 0.0) break;
+      GraphNode &node = *getNode((*ri).id);
+      if (static_cast<int32_t>(node.size()) > max) {
+        max   = node.size();
+        maxid = (*ri).id;
+      }
+    }
+#ifdef NGT_SHARED_MEMORY_ALLOCATOR
+    objectSpace->deleteObject(insertedObj);
+#endif
+    if (max < 0) {
+      std::stringstream msg;
+      msg << "Fatal inner error. Cannot find the identical object. id=" << id << std::endl;
+      NGTThrowException(msg);
+    }
+    ObjectDistances edges;
+    if (property.identicalObjectEdgeType == IdenticalObjectEdgeTypeUndirectedEdge) {
+      edges.push_back(ObjectDistance(maxid, 0.0));
+    }
+    repository.insert(id, edges);
+    addEdge(maxid, id, 0.0);
+    return;
+  }
   void insertIANNGNode(ObjectID id, ObjectDistances &results) {
     repository.insert(id, results);
     size_t nOfEdges = std::max(property.incomingEdge, property.outgoingEdge);

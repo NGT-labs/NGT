@@ -410,3 +410,111 @@ void NGT::Quantizer::build(ObjectSpace &os, bool verbose) {
 }
 
 #endif
+
+NGT::ObjectSpace *NGT::ObjectSpace::convertObjectSpace(NGT::ObjectSpace &srcObjectSpace,
+                                                       ObjectType targetDataType, float maxMagnitude) {
+  DistanceType distanceType = srcObjectSpace.getDistanceType();
+  size_t dimension          = srcObjectSpace.getDimension();
+  size_t size               = srcObjectSpace.getRepository().size();
+
+  NGT::ObjectSpace *dstObjectSpace = nullptr;
+
+  switch (targetDataType) {
+  case ObjectType::Float:
+    dstObjectSpace =
+        new NGT::ObjectSpaceRepository<float, double>(dimension, typeid(float), distanceType, maxMagnitude);
+    break;
+  case ObjectType::Float16:
+    dstObjectSpace = new NGT::ObjectSpaceRepository<NGT::float16, double>(dimension, typeid(NGT::float16),
+                                                                          distanceType, maxMagnitude);
+    break;
+  case ObjectType::Uint8:
+    dstObjectSpace = new NGT::ObjectSpaceRepository<uint8_t, double>(dimension, typeid(uint8_t), distanceType,
+                                                                     maxMagnitude);
+    break;
+  default:
+    std::stringstream msg;
+    msg << "Invalid target data type. " << targetDataType;
+    NGTThrowException(msg);
+  }
+
+  auto &dstRepo = dstObjectSpace->getRepository();
+  dstRepo.initialize();
+
+  auto &srcRepo                 = srcObjectSpace.getRepository();
+  const std::type_info &srcType = srcObjectSpace.getObjectType();
+
+  for (size_t id = 1; id < size; id++) {
+    if (srcRepo[id] == nullptr) {
+      dstRepo.push_back(nullptr);
+      continue;
+    }
+
+    std::vector<float> floatVector(dimension);
+#ifdef NGT_SHARED_MEMORY_ALLOCATOR
+    void *srcPtr = srcRepo[id]->getPointer(srcRepo.getAllocator());
+#else
+    void *srcPtr = srcRepo[id]->getPointer();
+#endif
+
+    if (srcType == typeid(float)) {
+      float *src = static_cast<float *>(srcPtr);
+      for (size_t i = 0; i < dimension; i++) {
+        floatVector[i] = src[i];
+      }
+    } else if (srcType == typeid(uint8_t)) {
+      uint8_t *src = static_cast<uint8_t *>(srcPtr);
+      for (size_t i = 0; i < dimension; i++) {
+        floatVector[i] = static_cast<float>(src[i]);
+      }
+    } else if (srcType == typeid(NGT::float16)) {
+      NGT::float16 *src = static_cast<NGT::float16 *>(srcPtr);
+      for (size_t i = 0; i < dimension; i++) {
+        floatVector[i] = static_cast<float>(src[i]);
+      }
+    }
+
+    auto *obj = dstRepo.allocateNormalizedPersistentObject(floatVector);
+    dstRepo.push_back(dynamic_cast<NGT::PersistentObject *>(obj));
+  }
+
+  return dstObjectSpace;
+}
+
+NGT::ObjectSpace::ObjectType NGT::ObjectSpace::getEstimatedObjectType() {
+  auto &repo                    = getRepository();
+  size_t size                   = repo.size();
+  size_t dim                    = getDimension();
+  const std::type_info &srcType = getObjectType();
+
+  if (srcType == typeid(uint8_t)) {
+    return ObjectType::Uint8;
+  }
+
+  NGT::ObjectSpace::ObjectType otype = dim < 100 ? ObjectType::Float : ObjectType::Float16;
+
+  for (size_t id = 1; id < size; id++) {
+    if (repo[id] == nullptr) {
+      continue;
+    }
+
+#ifdef NGT_SHARED_MEMORY_ALLOCATOR
+    void *ptr = repo[id]->getPointer(repo.getAllocator());
+#else
+    void *ptr = repo[id]->getPointer();
+#endif
+
+    if (srcType == typeid(float)) {
+      float *src = static_cast<float *>(ptr);
+      for (size_t i = 0; i < dim; i++) {
+        float val = src[i];
+        if (val < 0.0f || val > 255.0f || val != std::floor(val)) {
+          return otype;
+          ;
+        }
+      }
+    }
+  }
+
+  return ObjectType::Uint8;
+}

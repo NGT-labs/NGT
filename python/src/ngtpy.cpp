@@ -192,6 +192,8 @@ public:
     } else if (objectType == "Float16" || objectType == "float16") {
       prop.objectType = NGT::Index::Property::ObjectType::Float16;
 #endif
+    } else if (objectType == "Auto" || objectType == "auto") {
+      prop.objectType = NGT::Index::Property::ObjectType::ObjectTypeUnset;
     } else {
       std::stringstream msg;
       msg << "ngtpy::create: invalid object type. " << objectType;
@@ -250,6 +252,7 @@ public:
    size_t numThreads = 16,
    bool append = false,
    bool refinement = false,
+   bool build = true,
    bool debug = false
   ) {
     py::buffer_info info = objects.request();
@@ -272,7 +275,9 @@ public:
       NGTThrowException(msg);
     }
     NGT::Index::append(ptr, info.shape[0], append, refinement);
-    NGT::Index::createIndex(numThreads);
+    if (build) {
+      NGT::Index::createIndex(numThreads);
+    }
     numOfDistanceComputations = 0;
   }
 
@@ -623,40 +628,36 @@ public:
 #ifdef NGTQG_PROBE
       sc.setProbe(defaultProbe);
 #endif
-
+      NGT::ObjectDistances objects;
+      sc.setResults(&objects);
       NGTQG::Index::search(sc);
 
       numOfDistanceComputations += sc.distanceComputationCount;
 
       if (!withDistance) {
-	NGT::ResultPriorityQueue &r = sc.getWorkingResult();
-	py::array_t<int> ids(r.size());
+	py::array_t<int> ids(objects.size());
 	py::buffer_info idsinfo = ids.request();
-	int *endptr = reinterpret_cast<int*>(idsinfo.ptr);
-	int *ptr = endptr + (r.size() - 1);
+	int *ptr = reinterpret_cast<int*>(idsinfo.ptr);
 	if (zeroNumbering) {
-	  while (ptr >= endptr) {
-	    *ptr-- = r.top().id - 1;
-	    r.pop();
+	  for (auto& r : objects) {
+	    *ptr++ = r.id - 1;
 	  }
 	} else {
-	  while (ptr >= endptr) {
-	    *ptr-- = r.top().id;
-	    r.pop();
+	  for (auto& r : objects) {
+	    *ptr++ = r.id;
 	  }
 	}
 	return ids;
       }
+
       py::list results;
-      NGT::ObjectDistances r;
-      r.moveFrom(sc.getWorkingResult());
       if (zeroNumbering) {
-	for (auto ri = r.begin(); ri != r.end(); ++ri) {
-	  results.append(py::make_tuple((*ri).id - 1, (*ri).distance));
+	for (auto& r : objects) {
+	  results.append(py::make_tuple(r.id - 1, r.distance));
 	}
       } else {
-	for (auto ri = r.begin(); ri != r.end(); ++ri) {
-	  results.append(py::make_tuple((*ri).id, (*ri).distance));
+	for (auto& r : objects) {
+	  results.append(py::make_tuple(r.id, r.distance));
 	}
       }
       return results;
@@ -882,7 +883,6 @@ public:
     const std::vector<long int> &qshape = qinfo.shape;
     auto nOfQueries = qshape[0];
     size_t dimension = qshape[1];
-    //size_t psedoDimension = QBG::Index::getQuantizer().globalCodebookIndex.getObjectSpace().getPaddedDimension();
     auto pseudoDimension = QBG::Index::getQuantizer().property.dimension;
     auto *queryPtr = static_cast<float*>(qinfo.ptr);
 
@@ -1036,18 +1036,8 @@ public:
       sc.setObjectVector(qvector);
       size		= size > 0 ? size : defaultNumOfSearchObjects;
       epsilon		= epsilon > -1.0 ? epsilon : defaultEpsilon;
-#if 0
-      if (defaultExactResultExpansion >= 1.0) {
-       sc.setSize(static_cast<float>(size) * defaultExactResultExpansion);
-       sc.setExactResultSize(size);
-      } else {
-       sc.setSize(size);                               // the number of resulting objects.
-      }
-#else
       sc.setSize(size);
-      //std::cerr << "pass defaultResultExpansion=" << defaultResultExpansion << std::endl;
       sc.setRefinementExpansion(defaultResultExpansion);
-#endif
       sc.setEpsilon(epsilon);			// set exploration coefficient.
       sc.setBlobEpsilon(defaultBlobEpsilon);
       sc.setEdgeSize(defaultEdgeSize);
@@ -1208,6 +1198,7 @@ PYBIND11_MODULE(ngtpy, m) {
            py::arg("num_threads") = 8,
            py::arg("append") = true,
            py::arg("refinement") = false,
+	   py::arg("build") = true,
            py::arg("debug") = false)
       .def("insert", &::Index::insert,
            py::arg("object"),
@@ -1300,9 +1291,11 @@ PYBIND11_MODULE(ngtpy, m) {
            py::arg("result_expansion") = -FLT_MAX,
 #ifdef NGTQG_PROBE
            py::arg("edge_size") = INT_MIN,
-           py::arg("num_of_probes") = 0)
+           py::arg("num_of_probes") = 0
+           )
 #else
-           py::arg("edge_size") = INT_MIN)
+           py::arg("edge_size") = INT_MIN
+           )
 #endif
       // set_defaults is deprecated
       .def("set_defaults", &::QuantizedIndex::set,
@@ -1312,9 +1305,11 @@ PYBIND11_MODULE(ngtpy, m) {
            py::arg("result_expansion") = -FLT_MAX,
 #ifdef NGTQG_PROBE
            py::arg("edge_size") = INT_MIN,
-           py::arg("num_of_probes") = 0);
+           py::arg("num_of_probes") = 0
+           );
 #else
-           py::arg("edge_size") = INT_MIN);
+           py::arg("edge_size") = INT_MIN
+           );
 #endif
 
 

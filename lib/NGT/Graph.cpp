@@ -39,6 +39,7 @@ void NeighborhoodGraph::Property::set(NGT::Property &prop) {
   if (prop.outgoingEdge != -1) outgoingEdge = prop.outgoingEdge;
   if (prop.incomingEdge != -1) incomingEdge = prop.incomingEdge;
   if (prop.epsilonType != -1) epsilonType = prop.epsilonType;
+  if (prop.identicalObjectEdgeType != -1) identicalObjectEdgeType = prop.identicalObjectEdgeType;
 }
 
 void NeighborhoodGraph::Property::get(NGT::Property &prop) {
@@ -57,6 +58,8 @@ void NeighborhoodGraph::Property::get(NGT::Property &prop) {
   prop.buildTimeLimit             = buildTimeLimit;
   prop.outgoingEdge               = outgoingEdge;
   prop.incomingEdge               = incomingEdge;
+  prop.epsilonType                = epsilonType;
+  prop.identicalObjectEdgeType    = identicalObjectEdgeType;
 }
 
 #ifdef NGT_GRAPH_READ_ONLY_GRAPH
@@ -579,7 +582,6 @@ void NeighborhoodGraph::setupSeeds(NGT::SearchContainer &sc, ObjectDistances &se
       continue;
     }
     distanceChecked.insert((*ri).id);
-    //distanceChecked[(*ri).id] = 1;
     unchecked.push(*ri);
   }
 }

@@ -242,21 +242,18 @@ class ObjectSpace {
   enum ObjectType {
     ObjectTypeNone = 0,
     Uint8          = 1,
-    Float          = 2
+    Float          = 2,
 #ifdef NGT_HALF_FLOAT
-    ,
-    Float16 = 3
+    Float16 = 3,
 #endif
-    ,
-    Qsuint8 = 7
+    Qsuint8 = 7,
 #ifdef NGT_BFLOAT
-    ,
-    Bfloat16 = 5
+    Bfloat16 = 5,
 #endif
 #ifdef NGT_PQ4
-    ,
-    Qint4 = 10
+    Qint4 = 10,
 #endif
+    ObjectTypeUnset = 127
   };
 
   ObjectSpace(size_t d)
@@ -587,6 +584,11 @@ class ObjectSpace {
     return d;
 #endif
   }
+
+  static NGT::ObjectSpace *convertObjectSpace(ObjectSpace &srcObjectSpace, ObjectType targetDataType,
+                                              float maxMagnitude = 0.0);
+  ObjectType getEstimatedObjectType();
+
 #ifdef NGT_PQ4
   Quantizer &getQuantizer() { return quantizer; }
   NGT::Object *allocateQuantizedQuery(std::vector<float> &object);

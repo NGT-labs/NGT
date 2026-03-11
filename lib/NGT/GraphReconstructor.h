@@ -1147,7 +1147,7 @@ class GraphReconstructor {
         node.shrink_to_fit();
       }
       // incomming edges
-      if (noOfEdges != 0) {
+      if (noOfEdges > 0) {
         continue;
       }
       for (size_t idx = 0; idx < batchSize; idx++) {

@@ -18,6 +18,53 @@
 
 #include "NGT/Index.h"
 #include "NGT/NGTQ/Quantizer.h"
+#define NGTQG_RESIZED_NODE
+#define NGTQ_QUANTIZED_TREE
+
+#define NGT_GRAPH_CHECK_VECTOR
+#undef NGT_GRAPH_CHECK_BOOLEANSET
+#undef NGT_GRAPH_CHECK_HASH_BASED_BOOLEAN_SET
+#undef NGT_GRAPH_CHECK_TRICKYBOOLEANSET
+typedef NGT::BooleanVectorByEpoch<uint8_t> BooleanVectorByEpoch;
+
+#ifdef NGTQG_X86SIMDSORT
+#include "x86simdsort.h"
+#endif
+
+#define LIKELY(x) __builtin_expect(!!(x), 1)
+#define UNLIKELY(x) __builtin_expect(!!(x), 0)
+
+inline static void prefetchShort(unsigned char *ptr, const size_t byteSizeOfObject) {
+#ifndef NGT_NO_AVX
+  switch ((byteSizeOfObject - 1) >> 6) {
+  default:
+  case 16: _mm_prefetch(ptr, _MM_HINT_T0); ptr += 64;
+  case 15: _mm_prefetch(ptr, _MM_HINT_T0); ptr += 64;
+  case 14: _mm_prefetch(ptr, _MM_HINT_T0); ptr += 64;
+  case 13: _mm_prefetch(ptr, _MM_HINT_T0); ptr += 64;
+  case 12: _mm_prefetch(ptr, _MM_HINT_T0); ptr += 64;
+  case 11: _mm_prefetch(ptr, _MM_HINT_T0); ptr += 64;
+  case 10: _mm_prefetch(ptr, _MM_HINT_T0); ptr += 64;
+  case 9: _mm_prefetch(ptr, _MM_HINT_T0); ptr += 64;
+  case 8: _mm_prefetch(ptr, _MM_HINT_T0); ptr += 64;
+  case 7: _mm_prefetch(ptr, _MM_HINT_T0); ptr += 64;
+  case 6: _mm_prefetch(ptr, _MM_HINT_T0); ptr += 64;
+  case 5: _mm_prefetch(ptr, _MM_HINT_T0); ptr += 64;
+  case 4: _mm_prefetch(ptr, _MM_HINT_T0); ptr += 64;
+  case 3: _mm_prefetch(ptr, _MM_HINT_T0); ptr += 64;
+  case 2: _mm_prefetch(ptr, _MM_HINT_T0); ptr += 64;
+  case 1: _mm_prefetch(ptr, _MM_HINT_T0); ptr += 64;
+  case 0:
+    _mm_prefetch(ptr, _MM_HINT_T0);
+    ptr += 64;
+    break;
+  }
+#endif // NGT_NO_AVX
+}
+
+namespace NGT {
+template <typename T = detail::CandidateObject> using DistanceSorter = HeapCandidateObjects<T>;
+}
 
 #ifdef NGTQ_QBG
 
@@ -51,15 +98,16 @@ class QuantizedNode {
  public:
   ~QuantizedNode() { clear(); }
   void clear() {
-    ids.clear();
-    delete[] static_cast<uint8_t *>(objects);
+    ids = 0;
+    NGT::alignedFree64(objects);
     objects = 0;
   }
   uint32_t subspaceID;
-  std::vector<uint32_t> ids;
+  uint32_t nOfObjects;
+  uint32_t *ids;
   void *objects;
 #ifdef NGTQ_OBGRAPH
-  std::vector<std::vector<uint32_t>> blobIDs; // 各オブジェクトの最近傍k個のオブジェクトが属しているブロブのID
+  std::vector<std::vector<uint32_t>> blobIDs;
 #endif
 };
 
@@ -75,9 +123,11 @@ class QuantizedGraphRepository : public std::vector<QuantizedNode> {
         graphType(quantizedIndex.getQuantizer().property.graphType) {}
   ~QuantizedGraphRepository() {}
 
-  void *get(size_t id) { return PARENT::at(id).objects; }
+  void *get(size_t id) { return PARENT::operator[](id).objects; }
 
-  std::vector<uint32_t> &getIDs(size_t id) { return PARENT::at(id).ids; }
+  uint32_t *getIDs(size_t id) { return PARENT::operator[](id).ids; }
+  QuantizedNode &getNode(size_t id) { return PARENT::operator[](id); }
+  QuantizedNode *getNodes() { return PARENT::data(); }
   void construct(NGT::Index &ngtindex, NGTQ::Index &quantizedIndex, size_t maxNoOfEdges) {
     NGT::GraphAndTreeIndex &index         = static_cast<NGT::GraphAndTreeIndex &>(ngtindex.getIndex());
     NGT::NeighborhoodGraph &graph         = static_cast<NGT::NeighborhoodGraph &>(index);
@@ -85,148 +135,11 @@ class QuantizedGraphRepository : public std::vector<QuantizedNode> {
     construct(graphRepository, quantizedIndex, maxNoOfEdges);
   }
 
-  void construct(NGT::GraphRepository &graphRepository, NGTQ::Index &quantizedIndex, size_t maxNoOfEdges) {
-    NGTQ::InvertedIndexEntry<uint16_t> invertedIndexObjects(numOfSubspaces);
-    quantizedIndex.getQuantizer().extractInvertedIndexObject(invertedIndexObjects);
-    std::cerr << "inverted index object size=" << invertedIndexObjects.size() << std::endl;
-    std::cerr << "  vmsize==" << NGT::Common::getProcessVmSizeStr() << std::endl;
-    std::cerr << "  peak vmsize==" << NGT::Common::getProcessVmPeakStr() << std::endl;
-    quantizedIndex.getQuantizer().eraseInvertedIndexObject();
-    if (graphRepository.size() != invertedIndexObjects.size()) {
-      std::cerr << "QuantizedGraph::construct Warning! The sizes of the graphRepository and the "
-                   "invertedIndexObjects are not identical."
-                << graphRepository.size() << ":" << invertedIndexObjects.size() << std::endl;
-    }
+  void construct(NGT::GraphRepository &graphRepository, NGTQ::Index &quantizedIndex, size_t maxNoOfEdges);
 
-    PARENT::resize(graphRepository.size());
+  void serialize(std::ofstream &os, NGT::ObjectSpace *objspace = 0);
 
-    for (size_t id = 1; id < graphRepository.size(); id++) {
-      if ((graphRepository.size() > 100) && ((id % ((graphRepository.size() - 1) / 100)) == 0)) {
-        std::cerr << "# of processed objects=" << id << "/" << (graphRepository.size() - 1) << "("
-                  << id * 100 / (graphRepository.size() - 1) << "%)" << std::endl;
-      }
-      if (graphRepository.isEmpty(id)) {
-        continue;
-      }
-      if (id >= (*this).size()) {
-        std::stringstream msg;
-        msg << "Fatal inner error! ID exceeds the size of the inverted index. " << id << " "
-            << (*this).size();
-        NGTThrowException(msg);
-      }
-      NGT::GraphNode &node = *graphRepository.VECTOR::get(id);
-      size_t numOfEdges    = node.size() < maxNoOfEdges ? node.size() : maxNoOfEdges;
-      (*this)[id].ids.reserve(numOfEdges);
-      NGTQ::QuantizedObjectProcessingStream quantizedStream(quantizedIndex.getQuantizer().divisionNo,
-                                                            numOfEdges);
-#ifdef NGT_SHARED_MEMORY_ALLOCATOR
-      for (auto i = node.begin(graphRepository.allocator); i != node.end(graphRepository.allocator); ++i) {
-        if (distance(node.begin(graphRepository.allocator), i) >= static_cast<int64_t>(numOfEdges)) {
-#else
-      for (auto i = node.begin(); i != node.end(); i++) {
-        if (distance(node.begin(), i) >= static_cast<int64_t>(numOfEdges)) {
-#endif
-          break;
-        }
-        if ((*i).id == 0) {
-          std::cerr << "something strange" << std::endl;
-          abort();
-          continue;
-        }
-        (*this)[id].ids.push_back((*i).id);
-        for (size_t idx = 0; idx < numOfSubspaces; idx++) {
-#ifdef NGT_SHARED_MEMORY_ALLOCATOR
-#else
-          size_t dataNo = distance(node.begin(), i);
-#endif
-#if defined(NGT_SHARED_MEMORY_ALLOCATOR)
-          abort();
-#else
-          if (invertedIndexObjects.size() <= (*i).id) {
-            std::stringstream msg;
-            msg << "Fatal inner error! Invalid inverted index ID. ID=" << (*i).id << "/"
-                << invertedIndexObjects.size();
-            NGTThrowException(msg);
-          }
-          if (invertedIndexObjects[(*i).id].localID[idx] < 1 ||
-              invertedIndexObjects[(*i).id].localID[idx] > 16) {
-            std::stringstream msg;
-            msg << "Fatal inner error! Invalid local centroid ID. ID=" << (*i).id << ":"
-                << invertedIndexObjects[(*i).id].localID[idx];
-            NGTThrowException(msg);
-          }
-          quantizedStream.arrangeQuantizedObject(dataNo, idx, invertedIndexObjects[(*i).id].localID[idx] - 1);
-#endif
-        }
-      }
-
-      (*this)[id].objects = quantizedStream.compressIntoUint4();
-    }
-  }
-
-  void serialize(std::ofstream &os, NGT::ObjectSpace *objspace = 0) {
-#ifdef NGT_IVI
-#else
-    NGTQ::QuantizedObjectProcessingStream quantizedObjectProcessingStream(numOfSubspaces);
-#endif
-    uint64_t n = numOfSubspaces;
-    NGT::Serializer::write(os, n);
-    n = PARENT::size();
-    NGT::Serializer::write(os, n);
-    for (auto i = PARENT::begin(); i != PARENT::end(); ++i) {
-      uint32_t sid = (*i).subspaceID;
-      NGT::Serializer::write(os, sid);
-      NGT::Serializer::write(os, (*i).ids);
-#ifdef NGTQ_OBGRAPH
-      if (graphType == NGTQ::GraphTypeObjectBlobGraph) {
-        NGT::Serializer::write(os, (*i).blobIDs);
-      }
-#endif
-#ifdef NGT_IVI
-      size_t streamSize = quantizer.getQuantizedObjectDistance().getSizeOfCluster((*i).ids.size());
-#else
-      size_t streamSize = quantizedObjectProcessingStream.getUint4StreamSize((*i).ids.size());
-#endif
-      NGT::Serializer::write(os, static_cast<uint8_t *>((*i).objects), streamSize);
-    }
-  }
-
-  void deserialize(std::ifstream &is, NGT::ObjectSpace *objectspace = 0) {
-    try {
-#ifdef NGT_IVI
-#else
-      NGTQ::QuantizedObjectProcessingStream quantizedObjectProcessingStream(numOfSubspaces);
-#endif
-      uint64_t n;
-      NGT::Serializer::read(is, n);
-      numOfSubspaces = n;
-      NGT::Serializer::read(is, n);
-      PARENT::resize(n);
-      for (auto i = PARENT::begin(); i != PARENT::end(); ++i) {
-        uint32_t sid;
-        NGT::Serializer::read(is, sid);
-        (*i).subspaceID = sid;
-        NGT::Serializer::read(is, (*i).ids);
-#ifdef NGTQ_OBGRAPH
-        if (graphType == NGTQ::GraphTypeObjectBlobGraph) {
-          NGT::Serializer::read(is, (*i).blobIDs);
-        }
-#endif
-#ifdef NGT_IVI
-        size_t streamSize = quantizer.getQuantizedObjectDistance().getSizeOfCluster((*i).ids.size());
-#else
-        size_t streamSize = quantizedObjectProcessingStream.getUint4StreamSize((*i).ids.size());
-#endif
-        uint8_t *objectStream = new uint8_t[streamSize];
-        NGT::Serializer::read(is, objectStream, streamSize);
-        (*i).objects = objectStream;
-      }
-    } catch (NGT::Exception &err) {
-      std::stringstream msg;
-      msg << "QuantizedGraph::deserialize: Fatal error. " << err.what();
-      NGTThrowException(msg);
-    }
-  }
+  void deserialize(std::ifstream &is, NGT::ObjectSpace *objectspace = 0);
 
   bool stat(const string &path) {
     struct stat st;
@@ -282,7 +195,8 @@ class Index : public NGT::Index {
 
   void searchQuantizedGraph(NGT::NeighborhoodGraph &graph, NGTQG::SearchContainer &sc,
                             NGT::ObjectDistances &seeds) {
-    size_t sizeBackup = sc.size;
+    auto specifiedRadius = sc.radius;
+    size_t sizeBackup    = sc.size;
     if (sc.resultExpansion > 1.0) {
       sc.size *= sc.resultExpansion;
     }
@@ -300,7 +214,9 @@ class Index : public NGT::Index {
       rotatedQuery.resize(quantizer.property.dimension);
     }
 #ifndef NGTQG_NO_ROTATION
-    quantizedObjectDistance.rotation->mul(rotatedQuery.data());
+    if (quantizedObjectDistance.rotation != nullptr) {
+      quantizedObjectDistance.rotation->mul(rotatedQuery.data());
+    }
 #endif
 #ifdef NGTQ_QBG
     for (int i = 0; i < GLOBAL_SIZE; i++) {
@@ -320,7 +236,6 @@ class Index : public NGT::Index {
 
     graph.setupDistances(sc, seeds, NGT::PrimitiveComparator::L2Float::compare);
     graph.setupSeeds(sc, seeds, results, unchecked, distanceChecked);
-    auto specifiedRadius            = sc.radius;
     NGT::Distance explorationRadius = sc.explorationCoefficient * sc.radius;
     NGT::ObjectDistance result;
     NGT::ObjectDistance target;
@@ -331,8 +246,8 @@ class Index : public NGT::Index {
       if (target.distance > explorationRadius) {
         break;
       }
-      auto &neighborIDs   = quantizedGraph.getIDs(target.id);
-      size_t neighborSize = neighborIDs.size();
+      auto *neighborIDs   = quantizedGraph.getIDs(target.id);
+      size_t neighborSize = quantizedGraph.getNode(target.id).nOfObjects;
       float ds[neighborSize + NGTQ_SIMD_BLOCK_SIZE];
 
 #ifdef NGTQG_PREFETCH
@@ -435,7 +350,7 @@ class Index : public NGT::Index {
             sc.workingResult.pop();
           }
           if (specifiedRadius < std::numeric_limits<float>::max()) {
-            while (sc.workingResult.top().distance > specifiedRadius) {
+            while (sc.workingResult.top().distance > specifiedRadius && !sc.workingResult.empty()) {
               sc.workingResult.pop();
             }
           }
@@ -446,7 +361,236 @@ class Index : public NGT::Index {
     }
   }
 
-  void search(NGT::GraphIndex &index, NGTQG::SearchContainer &sc, NGT::ObjectDistances &seeds) {
+#if !defined(NGTQG_CLASSIC_SEARCH)
+  void searchQuantizedGraphUsingDistanceSorter(NGT::NeighborhoodGraph &graph, NGTQG::SearchContainer &sc,
+                                               NGT::Node::NodeID seedID) {
+    auto specifiedRadius                                   = sc.radius;
+    NGTQ::Quantizer &quantizer                             = quantizedIndex.getQuantizer();
+    NGTQ::QuantizedObjectDistance &quantizedObjectDistance = quantizer.getQuantizedObjectDistance();
+#ifdef NGTQG_PREFETCH
+    const size_t prefetchSize = graph.objectSpace->getPrefetchSize();
+#endif
+
+    auto rotatedQuery = graph.getObjectSpace().getObject(sc.object);
+    if (quantizer.property.dimension > rotatedQuery.size()) {
+      rotatedQuery.resize(quantizer.property.dimension);
+    }
+#ifndef NGTQG_NO_ROTATION
+    if (quantizedObjectDistance.rotation != nullptr) {
+      quantizedObjectDistance.rotation->mul(rotatedQuery.data());
+    }
+#endif
+#ifdef NGTQ_QBG
+    NGTQ::QuantizedObjectDistance::DistanceLookupTableUint8 cache[GLOBAL_SIZE];
+#else
+    NGTQ::QuantizedObjectDistance::DistanceLookupTableUint8 cache[GLOBAL_SIZE + 1];
+#endif
+
+#ifdef NGTQ_QBG
+    for (int i = 0; i < GLOBAL_SIZE; i++) {
+#else
+    for (int i = 1; i < GLOBAL_SIZE + 1; i++) {
+#endif
+      quantizedObjectDistance.initialize(cache[i]);
+      quantizedObjectDistance.createDistanceLookup(rotatedQuery.data(), i, cache[i]);
+    }
+    if (sc.explorationCoefficient == 0.0) {
+      sc.explorationCoefficient = NGT_EXPLORATION_COEFFICIENT;
+    }
+    size_t threadID = omp_get_thread_num();
+    if (threadID >= candidateNodePools.size()) {
+      candidateNodePools.resize(threadID + 1);
+    }
+    NGT::DistanceSorter<> *__restrict__ uncheckedPtr = &candidateNodePools[threadID];
+
+    uncheckedPtr->setResultExpansion(sc.resultExpansion);
+    uncheckedPtr->reset(sc.size, sc.resultExpansion);
+    if (threadID >= visitPools.size()) {
+      visitPools.resize(threadID + 1);
+    }
+    auto &distanceChecked = visitPools[threadID];
+    distanceChecked.reset();
+    QuantizedNode *quantizedNodes = quantizedGraph.getNodes();
+    alignas(16) uint16_t ds[128 + NGTQ_SIMD_BLOCK_SIZE];
+    constexpr uint16_t explorationShift   = 10;
+    constexpr uint16_t explorationScale   = 1 << explorationShift;
+    const uint32_t explorationCoefficient = sc.explorationCoefficient * explorationScale;
+    auto targetID                         = seedID;
+    uint32_t radius                       = 0x8FFFFFFF;
+    uint32_t explorationRadius            = 0x8FFFFFFF;
+    NGT::DistanceSorter<>::Object result;
+    NGT::DistanceSorter<>::Object target;
+    target.id = targetID;
+
+    while (true) {
+
+      auto *neighborIDs      = quantizedNodes[target.id].ids;
+      size_t neighborIDsSize = quantizedNodes[target.id].nOfObjects;
+#ifdef NGT_REVISED_QUANTIZED_DISTANCE
+      size_t neighborSize = neighborIDsSize > 32 ? neighborIDsSize & ~0x1Fu : neighborIDsSize;
+#else
+      size_t neighborSize = neighborIDs.size();
+#endif
+      auto *qobjs = quantizedNodes[target.id].objects;
+#ifdef NGTQG_PREFETCH
+      {
+        size_t size = (quantizedIndex.getQuantizer().divisionNo * neighborSize) / 2;
+        prefetchShort(static_cast<uint8_t *>(qobjs), size);
+      }
+#endif
+#ifdef NGTQ_QBG
+      quantizedObjectDistance(qobjs, ds, neighborSize, cache[0]);
+#else
+      quantizedObjectDistance(qobjs, ds, neighborSize, cache[1]);
+#endif
+      auto *__restrict__ dsPtr  = ds;
+      auto *__restrict__ idsPtr = neighborIDs;
+      for (size_t idx = 0; idx < neighborSize; idx++) {
+        uint32_t distance = dsPtr[idx];
+        auto objid        = idsPtr[idx];
+        if (distance <= explorationRadius) {
+          if (LIKELY(distanceChecked.visit(objid))) {
+            continue;
+          }
+#ifdef NGT_VISIT_COUNT
+          sc.visitCount++;
+#endif
+          result.id       = objid;
+          result.distance = distance;
+          int pushResult  = uncheckedPtr->push(result);
+          if (pushResult != 0) {
+            uint32_t rad      = uncheckedPtr->getMaxDistance();
+            radius            = rad;
+            explorationRadius = (radius * explorationCoefficient) >> explorationShift;
+          }
+        }
+      }
+      NGT::DistanceSorter<>::Object nobj;
+      bool stat = !uncheckedPtr->pop(nobj);
+      if (stat) break;
+      target.id       = nobj.id;
+      target.distance = uncheckedPtr->getCurrentDistance();
+      if (target.distance > explorationRadius) {
+        break;
+      }
+    }
+    size_t expandedSize = sc.resultExpansion > 1.0 ? sc.size * sc.resultExpansion : sc.size;
+    NGT::DistanceSorter<>::Object final_results[expandedSize];
+    size_t resultCount = uncheckedPtr->getObjects(final_results);
+    if (sc.resultIsAvailable()) {
+      NGT::ObjectDistances &qresults = sc.getResult();
+      if (sc.resultExpansion < 1.0) {
+        qresults.resize(resultCount);
+        for (size_t i = 0; i < resultCount; i++) {
+          qresults[i].id       = final_results[i].id;
+          qresults[i].distance = 0.0;
+        }
+      } else {
+        {
+          NGT::ObjectRepository &objectRepository  = NGT::Index::getObjectSpace().getRepository();
+          NGT::ObjectSpace::Comparator &comparator = NGT::Index::getObjectSpace().getComparator();
+          qresults.resize(resultCount);
+#if defined(NGTQG_X86SIMDSORT)
+          float distances[resultCount];
+          uint32_t ids[resultCount];
+#endif
+          for (size_t i = 0; i < resultCount; i++) {
+#ifdef NGTQG_PREFETCH
+            size_t offset = 2;
+            if (static_cast<size_t>(i + offset) < resultCount) {
+              size_t id = final_results[i + offset].id;
+#if defined(NGT_SHARED_MEMORY_ALLOCATOR)
+              NGT::PersistentObject &o = *objectRepository.get(id);
+#else
+              NGT::Object &o = *objectRepository[id];
+#endif
+              _mm_prefetch(&o[0] + prefetchSize, _MM_HINT_T0);
+            }
+#endif
+            auto id        = final_results[i].id;
+            qresults[i].id = id;
+#if defined(NGT_SHARED_MEMORY_ALLOCATOR)
+            NGT::PersistentObject &obj = *objectRepository.get(id);
+#else
+            NGT::Object &obj = *objectRepository[id];
+#endif
+#if defined(NGTQG_X86SIMDSORT)
+            distances[i] = comparator(sc.object, obj);
+            ids[i]       = qresults[i].id;
+#else
+            qresults[i].distance = comparator(sc.object, obj);
+#endif
+          }
+#ifdef NGTQG_X86SIMDSORT
+          {
+            size_t k = sc.size;
+            if (quantizedIndex.getQuantizer().property.orderedSearchRanking == true) {
+              x86simdsort::keyvalue_partial_sort(distances, ids, k, resultCount, false, false);
+            } else {
+              x86simdsort::keyvalue_select(distances, ids, k, resultCount, false, false);
+            }
+            for (size_t i = 0; i < k; i++) {
+              qresults[i].id       = ids[i];
+              qresults[i].distance = distances[i];
+            }
+          }
+#else
+          if (quantizedIndex.getQuantizer().property.orderedSearchRanking == true) {
+            std::partial_sort(qresults.begin(), qresults.begin() + sc.size, qresults.end());
+          } else {
+            std::nth_element(qresults.begin(), qresults.begin() + sc.size, qresults.end());
+          }
+#endif
+
+          if (specifiedRadius < std::numeric_limits<float>::max()) {
+            auto pos =
+                std::upper_bound(qresults.begin(), qresults.end(), NGT::ObjectDistance(0, specifiedRadius));
+            qresults.resize(distance(qresults.begin(), pos));
+          }
+        }
+        if (sc.size < qresults.size()) {
+          qresults.resize(sc.size);
+        }
+      }
+    } else {
+      while (!sc.workingResult.empty()) {
+        sc.workingResult.pop();
+      }
+      if (sc.resultExpansion >= 1.0) {
+        {
+          NGT::ObjectRepository &objectRepository  = NGT::Index::getObjectSpace().getRepository();
+          NGT::ObjectSpace::Comparator &comparator = NGT::Index::getObjectSpace().getComparator();
+          for (size_t i = 0; i < resultCount; i++) {
+            auto id = final_results[i].id;
+#if defined(NGT_SHARED_MEMORY_ALLOCATOR)
+            NGT::PersistentObject &obj = *objectRepository.get(id);
+#else
+            NGT::Object &obj = *objectRepository[id];
+#endif
+            NGT::ObjectDistance o(id, comparator(sc.object, obj));
+            sc.workingResult.push(o);
+          }
+          while (sc.workingResult.size() > sc.size) {
+            sc.workingResult.pop();
+          }
+          if (specifiedRadius < std::numeric_limits<float>::max()) {
+            while (sc.workingResult.top().distance > specifiedRadius && !sc.workingResult.empty()) {
+              sc.workingResult.pop();
+            }
+          }
+        }
+      } else {
+        for (size_t i = 0; i < resultCount; i++) {
+          auto id = final_results[i].id;
+          NGT::ObjectDistance o(id, 0.0);
+          sc.workingResult.push(o);
+        }
+      }
+    }
+  }
+#endif
+
+  void searchClassic(NGT::GraphIndex &index, NGTQG::SearchContainer &sc, NGT::ObjectDistances &seeds) {
 #if defined(NGT_SHARED_MEMORY_ALLOCATOR)
     NGTThrowException("NGTQG is not available for SHARED.");
 #endif
@@ -475,7 +619,7 @@ class Index : public NGT::Index {
     }
   }
 
-  void search(NGTQG::SearchQuery &sq) {
+  void searchClassic(NGTQG::SearchQuery &sq) {
     NGT::GraphAndTreeIndex &index = static_cast<NGT::GraphAndTreeIndex &>(getIndex());
     NGT::Object *query            = Index::allocateQuery(sq);
     try {
@@ -483,13 +627,11 @@ class Index : public NGT::Index {
       sc.distanceComputationCount = 0;
       sc.visitCount               = 0;
       NGT::ObjectDistances seeds;
-      if (!readOnly) {
-        try {
-          index.getSeedsFromTree(sc, seeds);
-        } catch (...) {
-        }
+      try {
+        index.getSeedsFromTree(sc, seeds);
+      } catch (...) {
       }
-      NGTQG::Index::search(static_cast<NGT::GraphIndex &>(index), sc, seeds);
+      NGTQG::Index::searchClassic(static_cast<NGT::GraphIndex &>(index), sc, seeds);
       sq.workingResult            = std::move(sc.workingResult);
       sq.distanceComputationCount = sc.distanceComputationCount;
       sq.visitCount               = sc.visitCount;
@@ -498,6 +640,70 @@ class Index : public NGT::Index {
       throw err;
     }
     deleteObject(query);
+  }
+
+#ifdef NGTQG_CLASSIC_SEARCH
+  void searchUsingDistanceSorter(NGTQG::SearchQuery &sq) {
+    NGTThrowException("searchUsingDistanceBucket is unavailable.");
+  }
+#else
+  void searchUsingDistanceSorter(NGTQG::SearchQuery &sq) {
+#ifdef NGTQG_TIMER
+    NGT::Timer timer_whole_func;
+    timer_whole_func.start();
+#endif
+    NGT::GraphAndTreeIndex &index = static_cast<NGT::GraphAndTreeIndex &>(getIndex());
+    NGT::Object *query            = Index::allocateQuery(sq);
+    NGT::Node::NodeID seedLeafNodeID;
+    try {
+      NGTQG::SearchContainer sc(sq, *query);
+      sc.distanceComputationCount = 0;
+      sc.visitCount               = 0;
+      NGT::ObjectDistances seeds;
+      try {
+        NGT::DVPTree::SearchContainer tso(sc.object);
+        tso.mode                     = NGT::DVPTree::SearchContainer::SearchLeaf;
+        tso.radius                   = 0.0;
+        tso.size                     = 1;
+        tso.distanceComputationCount = 0;
+        tso.visitCount               = 0;
+        try {
+          index.NGT::DVPTree::search(tso);
+        } catch (NGT::Exception &err) {
+          std::stringstream msg;
+          msg << "Cannot search for tree.:" << err.what();
+          NGTThrowException(msg);
+        }
+        seedLeafNodeID = tso.nodeID.getID();
+      } catch (NGT::Exception &err) {
+        std::stringstream msg;
+        msg << "Cannot get seeds from the tree.:" << err.what();
+        NGTThrowException(msg);
+      }
+      size_t nOfObjects = NGT::Index::getObjectSpace().getRepository().size() - 1;
+      auto seedNodeID   = seedLeafNodeID + nOfObjects;
+      NGTQG::Index::searchQuantizedGraphUsingDistanceSorter(static_cast<NGT::GraphIndex &>(index), sc,
+                                                            seedNodeID);
+      sq.distanceComputationCount = sc.distanceComputationCount;
+      sq.visitCount               = sc.visitCount;
+    } catch (NGT::Exception &err) {
+      deleteObject(query);
+      throw err;
+    }
+    deleteObject(query);
+  }
+#endif
+
+  void search(NGTQG::SearchQuery &sq) {
+#ifdef NGTQG_CLASSIC_SEARCH
+    searchClassic(sq);
+#else
+    if (quantizedIndex.getQuantizer().property.treeQuantization == true) {
+      searchUsingDistanceSorter(sq);
+    } else {
+      searchClassic(sq);
+    }
+#endif
   }
 
   static size_t getNumberOfSubvectors(size_t dimension, size_t dimensionOfSubvector) {
@@ -636,7 +842,6 @@ class Index : public NGT::Index {
     }
     NGT::Property ngtProperty;
     index.getProperty(ngtProperty);
-    //NGTQG::Command::CreateParameters createParameters(args, property.dimension);
 #ifdef NGTQ_QBG
     int align = 16;
     if (pseudoDimension == 0) {
@@ -719,6 +924,9 @@ class Index : public NGT::Index {
   NGTQ::Index blobIndex;
 
   QuantizedGraphRepository quantizedGraph;
+
+  std::vector<NGT::DistanceSorter<>> candidateNodePools;
+  std::vector<BooleanVectorByEpoch> visitPools;
 };
 
 } // namespace NGTQG

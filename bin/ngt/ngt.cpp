@@ -107,7 +107,7 @@ int main(int argc, char **argv) {
       ngt.preprocessForPQ(args);
 #ifdef NGT_FOREST
     } else if (command == "construct-forest") {
-      ngt.constructForestGraph(args);
+      ngt.constructForest(args);
 #endif
 #ifndef NGT_SHARED_MEMORY_ALLOCATOR
     } else if (command == "extract-query") {

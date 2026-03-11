@@ -56,13 +56,11 @@ template <class TYPE> class TreeNodes : public PersistentRepository<TYPE> {
         if (objectspace == 0) {
           TYPE *v = new (PersistentRepository<TYPE>::allocator)
               TYPE(nOfObjects, PersistentRepository<TYPE>::allocator);
-          //v->deserialize(is, allocator);
           assert(0);
           (*this).push_back(v);
         } else {
           TYPE *v = new (PersistentRepository<TYPE>::allocator)
               TYPE(nOfObjects, PersistentRepository<TYPE>::allocator, objectspace);
-          //v->deserialize(is, allocator, objectspace);
           assert(0);
           (*this).push_back(v);
         }

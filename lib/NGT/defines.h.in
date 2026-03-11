@@ -24,13 +24,14 @@
 #cmakedefine NGT_LARGE_DATASET			// more than 10M objects 
 #cmakedefine NGT_DISTANCE_COMPUTATION_COUNT	// count # of distance computations
 #cmakedefine NGT_QBG_DISABLED
-#cmakedefine NGTQG_ZERO_GLOBAL
-#cmakedefine NGTQG_NO_ROTATION
 #cmakedefine NGT_BFLOAT_DISABLED		// not use bfloat
 #cmakedefine NGT_BFLOAT_ENABLED
 #cmakedefine NGT_GRAPH_COMPACT_READ_ONLY_GRAPH
 #cmakedefine NGT_ENABLE_TIME_SEED_FOR_RANDOM
-#cmakedefine NGT_FOREST
+#cmakedefine NGTQG_ZERO_GLOBAL
+#cmakedefine NGTQG_NO_ROTATION
+#cmakedefine NGTQG_X86SIMDSORT
+#cmakedefine NGTQG_CLASSIC_SEARCH
 #cmakedefine NGTQ_OBGRAPH
 // End of cmake defines
 
@@ -62,7 +63,7 @@
 #ifdef	NGT_LARGE_DATASET
  #define	NGT_GRAPH_CHECK_HASH_BASED_BOOLEAN_SET
 #else
- #define	NGT_GRAPH_CHECK_VECTOR
+#define	NGT_GRAPH_CHECK_VECTOR
 #endif
 
 #ifdef	NGT_SHARED_MEMORY_ALLOCATOR
@@ -76,6 +77,7 @@
 #endif
 
 #define NGT_REFINEMENT
+#cmakedefine NGT_FOREST
 
 
 #if defined(NGT_AVX_DISABLED) || !defined(__AVX__)

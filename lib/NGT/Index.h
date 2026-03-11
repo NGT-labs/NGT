@@ -55,6 +55,7 @@ class Index {
     typedef NeighborhoodGraph::SeedType SeedType;
     typedef NeighborhoodGraph::GraphType GraphType;
     typedef NeighborhoodGraph::EpsilonType EpsilonType;
+    typedef NeighborhoodGraph::IdenticalObjectEdgeType IdenticalObjectEdgeType;
     enum ObjectAlignment { ObjectAlignmentNone = 0, ObjectAlignmentTrue = 1, ObjectAlignmentFalse = 2 };
     enum IndexType { IndexTypeNone = 0, GraphAndTree = 1, Graph = 2 };
     enum DatabaseType { DatabaseTypeNone = 0, Memory = 1, MemoryMappedFile = 2 };
@@ -138,6 +139,7 @@ class Index {
 #ifdef NGT_PQ4
       case ObjectSpace::ObjectType::Qint4: p.set("ObjectType", "QInteger-4B"); break;
 #endif
+      case ObjectSpace::ObjectType::ObjectTypeUnset: p.set("ObjectType", "Unset"); break;
       default: std::cerr << "Fatal error. Invalid object type. " << objectType << std::endl; abort();
       }
 #ifdef NGT_REFINEMENT
@@ -231,6 +233,8 @@ class Index {
         } else if (it->second == "QInteger-4B") {
           objectType = ObjectSpace::ObjectType::Qint4;
 #endif
+        } else if (it->second == "Unset") {
+          objectType = ObjectSpace::ObjectType::ObjectTypeUnset;
         } else {
           std::cerr << "Invalid object type in the property. " << it->first << ":" << it->second << std::endl;
         }
@@ -1054,24 +1058,7 @@ class GraphIndex : public Index, public NeighborhoodGraph {
 #endif
 #endif
 
-  void saveObjectRepository(const std::string &ofile) {
-#ifndef NGT_SHARED_MEMORY_ALLOCATOR
-    try {
-      mkdir(ofile);
-    } catch (...) {
-    }
-    if (objectSpace != 0) {
-      objectSpace->serialize(ofile + "/obj");
-    } else {
-      std::cerr << "saveIndex::Warning! ObjectSpace is null. continue saving..." << std::endl;
-    }
-#ifdef NGT_REFINEMENT
-    if (refinementObjectSpace != 0) {
-      refinementObjectSpace->serialize(ofile + "/robj");
-    }
-#endif
-#endif
-  }
+  void saveObjectRepository(const std::string &ofile);
 
   void saveGraph(const std::string &ofile) {
 #ifndef NGT_SHARED_MEMORY_ALLOCATOR
@@ -2188,6 +2175,67 @@ class GraphAndTreeIndex : public GraphIndex, public DVPTree {
     }
   }
 
+  void getSeedsFromObjects(size_t size, ObjectDistances &seeds) {
+    if (seeds.size() == 0) {
+      return;
+    }
+    if (NeighborhoodGraph::property.seedType == NeighborhoodGraph::SeedTypeNone) {
+      // if seedSize is zero, the result size of the query is used as seedSize.
+      size_t seedSize =
+          NeighborhoodGraph::property.seedSize == 0 ? size : NeighborhoodGraph::property.seedSize;
+      seedSize = seedSize > size ? size : seedSize;
+      if (seeds.size() > seedSize) {
+#ifndef NGT_ENABLE_TIME_SEED_FOR_RANDOM
+        srand(seeds[0].id);
+#endif
+        // to accelerate thinning data.
+        for (size_t i = seeds.size(); i > seedSize; i--) {
+          double random = ((double)rand() + 1.0) / ((double)RAND_MAX + 2.0);
+          size_t idx    = floor(i * random);
+          seeds[idx]    = seeds[i - 1];
+        }
+        seeds.resize(seedSize);
+      } else if (seeds.size() < seedSize) {
+        // A lack of the seeds is compansated by random seeds.
+      }
+      return;
+    } else if (NeighborhoodGraph::property.seedType == NeighborhoodGraph::SeedTypeFixedNodes) {
+      size_t seedSize =
+          NeighborhoodGraph::property.seedSize == 0 ? size : NeighborhoodGraph::property.seedSize;
+      if (seeds.size() > seedSize) {
+        seeds.resize(seedSize);
+      }
+      return;
+    } else if (NeighborhoodGraph::property.seedType == NeighborhoodGraph::SeedTypeRandomNodes) {
+      size_t seedSize =
+          NeighborhoodGraph::property.seedSize == 0 ? size : NeighborhoodGraph::property.seedSize;
+      if (seeds.size() > seedSize) {
+        // to accelerate thinning data.
+        for (size_t i = seeds.size(); i > seedSize; i--) {
+          double random = ((double)rand() + 1.0) / ((double)RAND_MAX + 2.0);
+          size_t idx    = floor(i * random);
+          seeds[idx]    = seeds[i - 1];
+        }
+        seeds.resize(seedSize);
+      }
+      return;
+    } else if (NeighborhoodGraph::property.seedType == NeighborhoodGraph::SeedTypeAllLeafNodes) {
+      return;
+    }
+  }
+
+  // GraphAndTreeIndex
+  void getSeedsFromTree(NGT::Node::ID nodeID, size_t size, ObjectDistances &seeds) {
+    try {
+      DVPTree::getObjectIDsFromLeaf(nodeID, seeds);
+    } catch (Exception &err) {
+      std::stringstream msg;
+      msg << "GraphAndTreeIndex::getSeeds: Cannot get a leaf.:" << err.what();
+      NGTThrowException(msg);
+    }
+    getSeedsFromObjects(size, seeds);
+  }
+
   // GraphAndTreeIndex
   void getSeedsFromTree(NGT::SearchContainer &sc, ObjectDistances &seeds) {
     DVPTree::SearchContainer tso(sc.object);
@@ -2203,38 +2251,13 @@ class GraphAndTreeIndex : public GraphIndex, public DVPTree {
       msg << "GraphAndTreeIndex::getSeeds: Cannot search for tree.:" << err.what();
       NGTThrowException(msg);
     }
-    try {
-      DVPTree::getObjectIDsFromLeaf(tso.nodeID, seeds);
-    } catch (Exception &err) {
-      std::stringstream msg;
-      msg << "GraphAndTreeIndex::getSeeds: Cannot get a leaf.:" << err.what();
-      NGTThrowException(msg);
-    }
     sc.distanceComputationCount += tso.distanceComputationCount;
     sc.visitCount += tso.visitCount;
-    if (sc.useAllNodesInLeaf ||
-        NeighborhoodGraph::property.seedType == NeighborhoodGraph::SeedTypeAllLeafNodes) {
-      return;
+    size_t seedSize = sc.size;
+    if (sc.useAllNodesInLeaf) {
+      seedSize = 0;
     }
-    // if seedSize is zero, the result size of the query is used as seedSize.
-    size_t seedSize =
-        NeighborhoodGraph::property.seedSize == 0 ? sc.size : NeighborhoodGraph::property.seedSize;
-    seedSize = seedSize > sc.size ? sc.size : seedSize;
-    if (seeds.size() > seedSize) {
-#ifndef NGT_ENABLE_TIME_SEED_FOR_RANDOM
-      srand(tso.nodeID.getID());
-#endif
-      // to accelerate thinning data.
-      for (size_t i = seeds.size(); i > seedSize; i--) {
-        double random = ((double)rand() + 1.0) / ((double)RAND_MAX + 2.0);
-        size_t idx    = floor(i * random);
-        seeds[idx]    = seeds[i - 1];
-      }
-      seeds.resize(seedSize);
-    } else if (seeds.size() < seedSize) {
-      // A lack of the seeds is compansated by random seeds.
-      //getRandomSeeds(seeds, seedSize);
-    }
+    getSeedsFromTree(tso.nodeID, seedSize, seeds);
   }
 
   // GraphAndTreeIndex

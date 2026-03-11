@@ -119,9 +119,8 @@ double NGT::PrimitiveComparator::compareDotProduct(const qint4 *a, const qint4 *
   auto *s8b          = reinterpret_cast<const int8_t *>(b);
   const int8_t *last = s8b + query.genuineSize;
 #if defined(__AVX512VNNI__)
-  const __m512i mask512x0F = _mm512_set1_epi16(0x000f);
-  const __m512i mask512xF0 = _mm512_set1_epi16(0x00f0);
-  //std::cerr << "lut.size=" << lut.size() << std::endl;
+  const __m512i mask512x0F   = _mm512_set1_epi16(0x000f);
+  const __m512i mask512xF0   = _mm512_set1_epi16(0x00f0);
   __m512i lookupTable512     = _mm512_loadu_si512((__m512i const *)lut.data());
   __m512i sum512             = _mm512_setzero_si512();
   const int8_t *lastgroup512 = last - 31;
