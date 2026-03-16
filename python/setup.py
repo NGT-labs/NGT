@@ -98,9 +98,9 @@ with open('README.md', 'r', encoding='utf-8') as fh:
 args = {
     'name': package,
     'version': version,
-    'author': 'Yahoo! JAPAN research',
-    'author_email': 'miwasaki@yahoo-corp.jp',
-    'url': 'https://github.com/yahoojapan/NGT',
+    'author': 'Masajiro Iwasaki',
+    'author_email': 'masajiro.iwasaki@gmail.com',
+    'url': 'https://github.com/NGT-labs/NGT',
     'description': 'python NGT',
     'long_description': long_description,
     'long_description_content_type': 'text/markdown',

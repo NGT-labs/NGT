@@ -1112,7 +1112,12 @@ class ObjectSpaceRepository : public ObjectSpace, public ObjectRepository {
   Object *allocateNormalizedObject(const std::string &textLine, const std::string &sep) {
     Object *allocatedObject = ObjectRepository::allocateObject(textLine, sep);
     if (normalization) {
-      normalize(*allocatedObject);
+      try {
+        normalize(*allocatedObject);
+      } catch (Exception &err) {
+        ObjectRepository::deleteObject(allocatedObject);
+        throw err;
+      }
     }
     return allocatedObject;
   }
@@ -1129,7 +1134,12 @@ class ObjectSpaceRepository : public ObjectSpace, public ObjectRepository {
     } else {
       allocatedObject = ObjectRepository::allocateObject(obj);
       if (normalization) {
-        normalize(*allocatedObject);
+        try {
+          normalize(*allocatedObject);
+        } catch (Exception &err) {
+          ObjectRepository::deleteObject(allocatedObject);
+          throw err;
+        }
       }
     }
     return allocatedObject;
@@ -1154,7 +1164,12 @@ class ObjectSpaceRepository : public ObjectSpace, public ObjectRepository {
     } else {
       allocatedObject = ObjectRepository::allocateObject(obj);
       if (normalization) {
-        normalize(*allocatedObject);
+        try {
+          normalize(*allocatedObject);
+        } catch (Exception &err) {
+          ObjectRepository::deleteObject(allocatedObject);
+          throw err;
+        }
       }
     }
     return allocatedObject;
@@ -1172,7 +1187,12 @@ class ObjectSpaceRepository : public ObjectSpace, public ObjectRepository {
     } else {
       allocatedObject = ObjectRepository::allocateObject(obj);
       if (normalization) {
-        normalize(*allocatedObject);
+        try {
+          normalize(*allocatedObject);
+        } catch (Exception &err) {
+          ObjectRepository::deleteObject(allocatedObject);
+          throw err;
+        }
       }
     }
     return allocatedObject;
@@ -1190,7 +1210,12 @@ class ObjectSpaceRepository : public ObjectSpace, public ObjectRepository {
     } else {
       allocatedObject = ObjectRepository::allocateObject(obj);
       if (normalization) {
-        normalize(*allocatedObject);
+        try {
+          normalize(*allocatedObject);
+        } catch (Exception &err) {
+          ObjectRepository::deleteObject(allocatedObject);
+          throw err;
+        }
       }
     }
     return allocatedObject;
@@ -1209,7 +1234,12 @@ class ObjectSpaceRepository : public ObjectSpace, public ObjectRepository {
       } else {
         allocatedObject = ObjectRepository::allocateObject(obj, size);
         if (normalization) {
-          normalize(*allocatedObject);
+          try {
+            normalize(*allocatedObject);
+          } catch (Exception &err) {
+            ObjectRepository::deleteObject(allocatedObject);
+            throw err;
+          }
         }
       }
     } catch (Exception &err) {
@@ -1232,9 +1262,22 @@ class ObjectSpaceRepository : public ObjectSpace, public ObjectRepository {
       allocatedObject = ObjectRepository::allocatePersistentObject(qobj);
     } else {
       allocatedObject = ObjectRepository::allocatePersistentObject(obj);
+#ifdef NGT_SHARED_MEMORY_ALLOCATOR
+      normalize(*allocatedObject);
+#else
       if (normalization) {
+#ifdef NGT_SHARED_MEMORY_ALLOCATOR
         normalize(*allocatedObject);
+#else
+        try {
+          normalize(*allocatedObject);
+        } catch (Exception &err) {
+          ObjectRepository::deleteObject(allocatedObject);
+          throw err;
+        }
+#endif
       }
+#endif
     }
     return allocatedObject;
   }
@@ -1260,7 +1303,16 @@ class ObjectSpaceRepository : public ObjectSpace, public ObjectRepository {
       } else {
         allocatedObject = ObjectRepository::allocatePersistentObject(obj);
         if (normalization) {
+#ifdef NGT_SHARED_MEMORY_ALLOCATOR
           normalize(*allocatedObject);
+#else
+          try {
+            normalize(*allocatedObject);
+          } catch (Exception &err) {
+            ObjectRepository::deleteObject(allocatedObject);
+            throw err;
+          }
+#endif
         }
       }
     } catch (Exception &err) {
@@ -1284,7 +1336,16 @@ class ObjectSpaceRepository : public ObjectSpace, public ObjectRepository {
     } else {
       allocatedObject = ObjectRepository::allocatePersistentObject(obj);
       if (normalization) {
+#ifdef NGT_SHARED_MEMORY_ALLOCATOR
         normalize(*allocatedObject);
+#else
+        try {
+          normalize(*allocatedObject);
+        } catch (Exception &err) {
+          ObjectRepository::deleteObject(allocatedObject);
+          throw err;
+        }
+#endif
       }
     }
     return allocatedObject;
@@ -1303,7 +1364,16 @@ class ObjectSpaceRepository : public ObjectSpace, public ObjectRepository {
     } else {
       allocatedObject = ObjectRepository::allocatePersistentObject(obj);
       if (normalization) {
+#ifdef NGT_SHARED_MEMORY_ALLOCATOR
         normalize(*allocatedObject);
+#else
+        try {
+          normalize(*allocatedObject);
+        } catch (Exception &err) {
+          ObjectRepository::deleteObject(allocatedObject);
+          throw err;
+        }
+#endif
       }
     }
     return allocatedObject;

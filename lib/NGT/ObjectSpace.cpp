@@ -474,10 +474,15 @@ NGT::ObjectSpace *NGT::ObjectSpace::convertObjectSpace(NGT::ObjectSpace &srcObje
       }
     }
 
-    auto *obj = dstRepo.allocateNormalizedPersistentObject(floatVector);
-    dstRepo.push_back(dynamic_cast<NGT::PersistentObject *>(obj));
+    PersistentObject *obj = 0;
+    try {
+      obj = dstRepo.allocateNormalizedPersistentObject(floatVector);
+    } catch (Exception &err) {
+      std::cerr << err.what() << " continue..." << std::endl;
+      obj = dstRepo.allocatePersistentObject(floatVector);
+    }
+    dstRepo.push_back(obj);
   }
-
   return dstObjectSpace;
 }
 

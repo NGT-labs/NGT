@@ -1,7 +1,7 @@
 if( ${UNIX} )
 	option(NGT_SHARED_MEMORY_ALLOCATOR "enable shared memory" OFF)
 	configure_file(${CMAKE_CURRENT_SOURCE_DIR}/defines.h.in ${CMAKE_CURRENT_BINARY_DIR}/defines.h)
-	include_directories("${CMAKE_CURRENT_BINARY_DIR}" "${PROJECT_SOURCE_DIR}/lib" "${PROJECT_BINARY_DIR}/lib/" "/home/miwasaki/work/NGT-dev/x86-simd-sort/lib")
+	include_directories("${CMAKE_CURRENT_BINARY_DIR}" "${PROJECT_SOURCE_DIR}/lib" "${PROJECT_BINARY_DIR}/lib/")
 
 	if(${NGT_QBG_DISABLED})
 		file(GLOB NGT_SOURCES *.cpp)
@@ -10,9 +10,7 @@ if( ${UNIX} )
 	endif()
 	file(GLOB HEADER_FILES *.h *.hpp)
 	file(GLOB NGTQ_HEADER_FILES NGTQ/*.h NGTQ/*.hpp)
-	file(GLOB BPQ_HEADER_FILES BitmapPriorityQueue/*.h)
 
-	link_directories(/home/miwasaki/work/NGT-dev/x86-simd-sort/builddir)
 	add_library(ngtstatic STATIC ${NGT_SOURCES})
 	set_target_properties(ngtstatic PROPERTIES OUTPUT_NAME ngt)
 	set_target_properties(ngtstatic PROPERTIES COMPILE_FLAGS "-fPIC")
