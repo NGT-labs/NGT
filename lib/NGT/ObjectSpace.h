@@ -367,13 +367,13 @@ class ObjectSpace {
         }
       }
       std::stringstream msg;
+#ifdef NGT_DISABLE_NORMALIZATION_ERROR_CHECK
+      return;
+#else
       msg << "ObjectSpace::normalize: Error! the object is an invalid zero vector for the cosine similarity. "
           << "type=" << typeid(T).name() << ". ";
-      msg << "normalize before ";
-      for (size_t i = 0; i < dim; i++) {
-        msg << data[i] << " ";
-      }
       NGTThrowException(msg);
+#endif
     }
     sum = sqrt(sum);
     for (size_t i = 0; i < dim; i++) {

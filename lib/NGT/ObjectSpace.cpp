@@ -474,6 +474,7 @@ NGT::ObjectSpace *NGT::ObjectSpace::convertObjectSpace(NGT::ObjectSpace &srcObje
       }
     }
 
+#ifdef NGT_DISABLE_NORMALIZATION_ERROR_CHECK
     PersistentObject *obj = 0;
     try {
       obj = dstRepo.allocateNormalizedPersistentObject(floatVector);
@@ -481,6 +482,9 @@ NGT::ObjectSpace *NGT::ObjectSpace::convertObjectSpace(NGT::ObjectSpace &srcObje
       std::cerr << err.what() << " continue..." << std::endl;
       obj = dstRepo.allocatePersistentObject(floatVector);
     }
+#else
+    auto *obj = dstRepo.allocateNormalizedPersistentObject(floatVector);
+#endif
     dstRepo.push_back(obj);
   }
   return dstObjectSpace;

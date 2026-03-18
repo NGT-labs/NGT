@@ -146,6 +146,7 @@ class ObjectRepository : public Repository<Object> {
       object.reserve(dim);
       try {
         extractObjectFromText(line, "\t, ", object);
+#ifdef NGT_DISABLE_NORMALIZATION_ERROR_CHECK
         PersistentObject *obj = 0;
         try {
           obj = allocateNormalizedPersistentObject(object);
@@ -153,6 +154,9 @@ class ObjectRepository : public Repository<Object> {
           std::cerr << err.what() << " continue..." << std::endl;
           obj = allocatePersistentObject(object);
         }
+#else
+        auto *obj = allocateNormalizedPersistentObject(object);
+#endif
         push_back(obj);
       } catch (Exception &err) {
         std::cerr << "ObjectSpace::readText: Warning! Invalid line. " << err.what() << " [" << line
@@ -181,6 +185,7 @@ class ObjectRepository : public Repository<Object> {
         object.push_back(data[dataidx]);
       }
       try {
+#ifdef NGT_DISABLE_NORMALIZATION_ERROR_CHECK
         PersistentObject *obj = 0;
         try {
           obj = allocateNormalizedPersistentObject(object);
@@ -188,6 +193,9 @@ class ObjectRepository : public Repository<Object> {
           std::cerr << err.what() << " " << typeid(T).name() << ". continue..." << std::endl;
           obj = allocatePersistentObject(object);
         }
+#else
+        auto *obj = allocateNormalizedPersistentObject(object);
+#endif
         push_back(obj);
       } catch (Exception &err) {
         std::cerr << "ObjectSpace::readText: Warning! Invalid data. Skip the data no. " << idx
