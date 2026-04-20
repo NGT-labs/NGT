@@ -1262,9 +1262,6 @@ class ObjectSpaceRepository : public ObjectSpace, public ObjectRepository {
       allocatedObject = ObjectRepository::allocatePersistentObject(qobj);
     } else {
       allocatedObject = ObjectRepository::allocatePersistentObject(obj);
-#ifdef NGT_SHARED_MEMORY_ALLOCATOR
-      normalize(*allocatedObject);
-#else
       if (normalization) {
 #ifdef NGT_SHARED_MEMORY_ALLOCATOR
         normalize(*allocatedObject);
@@ -1277,7 +1274,6 @@ class ObjectSpaceRepository : public ObjectSpace, public ObjectRepository {
         }
 #endif
       }
-#endif
     }
     return allocatedObject;
   }

@@ -19,7 +19,8 @@
 // Begin of cmake defines
 #cmakedefine NGT_SHARED_MEMORY_ALLOCATOR	// use shared memory for indexes
 #cmakedefine NGT_GRAPH_CHECK_VECTOR		// use vector to check whether accessed
-#cmakedefine NGT_AVX_DISABLED			// not use avx
+#cmakedefine NGT_SIMD_DISABLED			// not use SIMD
+#cmakedefine NGT_AVX_DISABLED			// not use AVX
 #cmakedefine NGT_AVX2				// use avx2
 #cmakedefine NGT_LARGE_DATASET			// more than 10M objects 
 #cmakedefine NGT_DISTANCE_COMPUTATION_COUNT	// count # of distance computations
@@ -81,17 +82,38 @@
 #cmakedefine NGT_FOREST
 
 
-#if defined(NGT_AVX_DISABLED) || !defined(__AVX__)
-#define NGT_NO_AVX
-#elif defined(NGT_AVX2)
-#undef NGT_AVX512
-#else
-#if defined(__AVX512F__) && defined(__AVX512DQ__)
-#define NGT_AVX512
-#elif defined(__AVX2__)
-#define NGT_AVX2
-#else
-#define NGT_NO_AVX
-#endif
+#if defined(__arm__) || defined(__aarch64__)
+  #define NGT_NO_AVX
+  #undef NGT_AVX512
+  #undef NGT_AVX2
+  #if defined(__aarch64__)
+    #define NGT_NEON
+  #elif defined(__ARM_NEON) || defined(__ARM_NEON__)
+    #define NGT_NEON
+  #endif
 #endif
 
+#if (defined(__i386__) || defined(__x86_64__))
+  #undef NGT_NEON
+  #if !defined(__AVX__)
+    #define NGT_NO_AVX
+  #elif defined(NGT_AVX2)
+    #undef NGT_AVX512
+  #else
+    #if defined(__AVX512F__) && defined(__AVX512DQ__)
+      #define NGT_AVX512
+    #elif defined(__AVX2__)
+      #define NGT_AVX2
+    #else
+      #define NGT_NO_AVX
+    #endif
+  #endif
+#endif
+
+#if defined(NGT_SIMD_DISABLED) || defined(NGT_AVX_DISABLED)
+  #define NGT_NO_SIMD
+  #define NGT_NO_AVX
+  #undef NGT_AVX512
+  #undef NGT_AVX2
+  #undef NGT_NEON
+#endif

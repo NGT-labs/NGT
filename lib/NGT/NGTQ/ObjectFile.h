@@ -68,8 +68,8 @@ class ObjectFile : public ArrayFile<NGT::Object> {
 #ifdef NGT_HALF_FLOAT
     case DataTypeFloat16:
       genuineDimension = ArrayFile<NGT::Object>::_fileHead.recordSize / sizeof(NGT::float16);
-      objectSpace      = new NGT::ObjectSpaceRepository<NGT::float16, float>(genuineDimension,
-                                                                             typeid(NGT::float16), distanceType);
+      objectSpace = new NGT::ObjectSpaceRepository<NGT::float16, float>(genuineDimension,
+                                                                        typeid(NGT::float16), distanceType);
       break;
 #endif
     default:

@@ -1286,16 +1286,16 @@ class Optimizer {
       time.push_back(std::make_pair((*i).meanTime, (*i).meanAccuracy));
     }
     {
-      size_t last  = distance.size() - 1;
-      double xfrom = (distance[1].second * distance[0].first - distance[0].second * distance[1].first +
-                      accuracyRangeFrom * (distance[1].first - distance[0].first)) /
-                     (distance[1].second - distance[0].second);
-      double xto = (distance[last].second * distance[last - 1].first -
-                    distance[last - 1].second * distance[last].first +
-                    accuracyRangeTo * (distance[last].first - distance[last - 1].first)) /
-                   (distance[last].second - distance[last - 1].second);
-      distance[0].first     = xfrom;
-      distance[0].second    = accuracyRangeFrom;
+      size_t last        = distance.size() - 1;
+      double xfrom       = (distance[1].second * distance[0].first - distance[0].second * distance[1].first +
+                            accuracyRangeFrom * (distance[1].first - distance[0].first)) /
+                           (distance[1].second - distance[0].second);
+      double xto         = (distance[last].second * distance[last - 1].first -
+                            distance[last - 1].second * distance[last].first +
+                            accuracyRangeTo * (distance[last].first - distance[last - 1].first)) /
+                           (distance[last].second - distance[last - 1].second);
+      distance[0].first  = xfrom;
+      distance[0].second = accuracyRangeFrom;
       distance[last].first  = xto;
       distance[last].second = accuracyRangeTo;
       double area           = 0.0;
@@ -1325,15 +1325,15 @@ class Optimizer {
       meanVisitCount = area / (visit[last].second - visit[0].second);
     }
     {
-      size_t last  = time.size() - 1;
-      double xfrom = (time[1].second * time[0].first - time[0].second * time[1].first +
-                      accuracyRangeFrom * (time[1].first - time[0].first)) /
-                     (time[1].second - time[0].second);
-      double xto = (time[last].second * time[last - 1].first - time[last - 1].second * time[last].first +
-                    accuracyRangeTo * (time[last].first - time[last - 1].first)) /
-                   (time[last].second - time[last - 1].second);
-      time[0].first     = xfrom;
-      time[0].second    = accuracyRangeFrom;
+      size_t last    = time.size() - 1;
+      double xfrom   = (time[1].second * time[0].first - time[0].second * time[1].first +
+                        accuracyRangeFrom * (time[1].first - time[0].first)) /
+                       (time[1].second - time[0].second);
+      double xto     = (time[last].second * time[last - 1].first - time[last - 1].second * time[last].first +
+                        accuracyRangeTo * (time[last].first - time[last - 1].first)) /
+                       (time[last].second - time[last - 1].second);
+      time[0].first  = xfrom;
+      time[0].second = accuracyRangeFrom;
       time[last].first  = xto;
       time[last].second = accuracyRangeTo;
       double area       = 0.0;

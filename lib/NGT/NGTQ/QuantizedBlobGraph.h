@@ -1777,7 +1777,7 @@ class Index : public NGTQ::Index {
             {
               uint8_t *bobjs = static_cast<uint8_t *>(currentBlob.objects);
               size_t size    = ((noOfObjects - 1) / (NGTQ_SIMD_BLOCK_SIZE * NGTQ_BATCH_SIZE) + 1) *
-                            (NGTQ_SIMD_BLOCK_SIZE * NGTQ_BATCH_SIZE);
+                               (NGTQ_SIMD_BLOCK_SIZE * NGTQ_BATCH_SIZE);
               size /= 2;
               size *= getQuantizer().divisionNo;
               NGT::MemoryCache::prefetch(bobjs, size);
@@ -2127,7 +2127,7 @@ class Index : public NGTQ::Index {
           for (size_t id = 1; id < quantizer.objectList.size(); id++) {
             double random = ((double)rand() + 1.0) / ((double)RAND_MAX + 2.0);
             double p      = static_cast<double>(n - pickedObjectCount) /
-                       static_cast<double>(quantizer.objectList.size() - id);
+                            static_cast<double>(quantizer.objectList.size() - id);
             if (p == 0.0) {
               break;
             }

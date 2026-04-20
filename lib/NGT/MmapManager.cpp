@@ -345,7 +345,7 @@ std::string getErrorStr(int32_t err_num) {
 size_t MmapManager::getTotalSize() const {
   const uint16_t active_unit = _impl->mmapCntlHead->active_unit;
   const size_t ret_size      = ((_impl->mmapCntlHead->unit_num - 1) * _impl->mmapCntlHead->base_size) +
-                          _impl->mmapCntlHead->data_headers[active_unit].break_p;
+                               _impl->mmapCntlHead->data_headers[active_unit].break_p;
 
   return ret_size;
 }

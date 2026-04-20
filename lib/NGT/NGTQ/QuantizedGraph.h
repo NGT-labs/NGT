@@ -254,7 +254,7 @@ class Index : public NGT::Index {
       {
         uint8_t *lid = static_cast<uint8_t *>(quantizedGraph.get(target.id));
         size_t size  = ((neighborSize - 1) / (NGTQ_SIMD_BLOCK_SIZE * NGTQ_BATCH_SIZE) + 1) *
-                      (NGTQ_SIMD_BLOCK_SIZE * NGTQ_BATCH_SIZE);
+                       (NGTQ_SIMD_BLOCK_SIZE * NGTQ_BATCH_SIZE);
         size /= 2;
         size *= quantizedIndex.getQuantizer().divisionNo;
 

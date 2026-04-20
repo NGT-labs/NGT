@@ -6308,7 +6308,7 @@ inline void NGTQ::ScalarQuantizedInt8ObjectProcessingStream::arrange(
   float scale  = quantizer.property.scalarQuantizationScale;
   float offset = quantizer.property.scalarQuantizationOffset;
   auto shift   = quantizer.property.distanceType == DistanceType::DistanceTypeInnerProduct &&
-               *dataTypeInfo == typeid(NGT::qsint8);
+                 *dataTypeInfo == typeid(NGT::qsint8);
   for (size_t oidx = 0; oidx < invertedIndexObjects.size(); oidx++) {
     std::vector<float> object;
     quantizer.objectList.get(invertedIndexObjects[oidx].id, object);

@@ -18,10 +18,12 @@
 
 #include "NGT/defines.h"
 
-#if defined(NGT_NO_AVX)
+#if defined(NGT_NO_SIMD)
 #include "NGT/PrimitiveComparatorNoArch.h"
 #elif defined(__x86_64__)
 #include "NGT/PrimitiveComparatorX86.h"
+#elif defined(NGT_NEON)
+#include "NGT/PrimitiveComparatorArm.h"
 #else
 #include "NGT/PrimitiveComparatorNoArch.h"
 #endif

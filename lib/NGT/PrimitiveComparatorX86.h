@@ -204,7 +204,7 @@ class PrimitiveComparator {
 #endif
     __m128 tmp = _mm_hadd_ps(sum128, _mm_set1_ps(0));
     double s   = _mm_cvtss_f32(_mm_shuffle_ps(tmp, tmp, _MM_SHUFFLE(0, 0, 0, 0))) +
-               _mm_cvtss_f32(_mm_shuffle_ps(tmp, tmp, _MM_SHUFFLE(0, 0, 0, 1)));
+                 _mm_cvtss_f32(_mm_shuffle_ps(tmp, tmp, _MM_SHUFFLE(0, 0, 0, 1)));
     return sqrt(s);
   }
 #endif
@@ -227,7 +227,7 @@ class PrimitiveComparator {
     __m128 sum128 = _mm_add_ps(_mm256_extractf128_ps(sum256, 0), _mm256_extractf128_ps(sum256, 1));
     __m128 tmp    = _mm_hadd_ps(sum128, _mm_set1_ps(0));
     double d      = _mm_cvtss_f32(_mm_shuffle_ps(tmp, tmp, _MM_SHUFFLE(0, 0, 0, 0))) +
-               _mm_cvtss_f32(_mm_shuffle_ps(tmp, tmp, _MM_SHUFFLE(0, 0, 0, 1)));
+                    _mm_cvtss_f32(_mm_shuffle_ps(tmp, tmp, _MM_SHUFFLE(0, 0, 0, 1)));
     return d;
   }
 #endif

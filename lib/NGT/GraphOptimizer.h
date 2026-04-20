@@ -555,8 +555,8 @@ class GraphOptimizer {
     }
     edgeRate /= (transition.size() - 1);
     accuracyRate /= (transition.size() - 1);
-    size_t estimatedEdge = std::get<0>(transition[0].second) +
-                           edgeRate * (log2(parameter.targetNoOfObjects) - log2(transition[0].first));
+    size_t estimatedEdge    = std::get<0>(transition[0].second) +
+                              edgeRate * (log2(parameter.targetNoOfObjects) - log2(transition[0].first));
     float estimatedAccuracy = std::get<1>(transition[0].second) +
                               accuracyRate * (log2(parameter.targetNoOfObjects) - log2(transition[0].first));
     if (estimatedAccuracy < parameter.targetAccuracy) {
