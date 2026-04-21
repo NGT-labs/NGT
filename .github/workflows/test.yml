@@ -29,10 +29,14 @@ jobs:
       run: |
         echo "OpenMP_ROOT=$(brew --prefix libomp)" >> "$GITHUB_ENV"
 
-    - run: cmake -S . -B build
+    - run: |
+        cmake -S . -B build \
+          -DCMAKE_INSTALL_PREFIX=$(pwd)/install \
+          -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+          -DNGT_BFLOAT_DISABLED=ON
 
     - run: cmake --build build
 
     - run: cmake --install build
 
-    - run: ngt -d 128 -o c create index data/sift-dataset-5k.tsv
+    - run: install/bin/ngt -d 128 -o c create index data/sift-dataset-5k.tsv
