@@ -32,6 +32,8 @@ jobs:
     - run: |
         cmake -S . -B build \
           -DCMAKE_INSTALL_PREFIX=$(pwd)/install \
+          -DCMAKE_INSTALL_LIBDIR=lib \
+          -DCMAKE_INSTALL_RPATH="@loader_path/../lib" \
           -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
           -DNGT_BFLOAT_DISABLED=ON
 
