@@ -848,6 +848,7 @@ class PrimitiveComparator {
   }
   inline static double compareDotProduct(const int8_t *a, const int8_t *b, size_t size) {
     const auto *last = a + size;
+    __m128i sum128   = _mm_setzero_si128();
 #if defined(NGT_AVX512) || defined(NGT_AVX2)
 #if defined(NGT_AVX512)
     __m512i sum512 = _mm512_setzero_si512();
@@ -886,7 +887,7 @@ class PrimitiveComparator {
         b += 32;
       }
     }
-    __m128i sum128 = _mm_add_epi32(_mm256_extracti128_si256(sum256, 0), _mm256_extracti128_si256(sum256, 1));
+    sum128 = _mm_add_epi32(_mm256_extracti128_si256(sum256, 0), _mm256_extracti128_si256(sum256, 1));
 #endif
     {
       const auto *lastgroup = last - 15;

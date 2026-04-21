@@ -463,7 +463,7 @@ class PrimitiveComparator {
     float sum = vaddvq_f32(sum_vec);
 
     while (a < last) {
-      float diff = static_cast<float>(*a++) - static_cast<float>(*b++);
+      float diff = vcvtah_f32_bf16(*a++) - vcvtah_f32_bf16(*b++);
       sum += diff * diff;
     }
 
