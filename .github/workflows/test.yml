@@ -1,0 +1,38 @@
+name: CI build
+
+on:
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-and-test:
+    strategy:
+      matrix:
+        os: 
+        - ubuntu-latest
+        - macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+    - name: Check out code
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+    - name: Install Linux dependencies
+      if: matrix.os == 'ubuntu-latest'
+      run: sudo apt-get install -y libblas-dev liblapack-dev cmake
+
+    - name: Install macOS dependencies
+      if: matrix.os == 'macos-latest'
+      run: brew install libomp cmake
+
+    - name: Set macOS config
+      if: matrix.os == 'macos-latest'
+      run: |
+        echo "OpenMP_ROOT=$(brew --prefix libomp)" >> "$GITHUB_ENV"
+
+    - run: cmake -S . -B build
+
+    - run: cmake --build build
+
+    - run: cmake --install build
+
+    - run: ngt -d 128 -o c create index data/sift-dataset-5k.tsv
