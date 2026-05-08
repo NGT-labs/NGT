@@ -16,7 +16,9 @@
 
 #include "NGT/defines.h"
 
-#if defined(NGT_NO_SIMD) && defined(NGT_PQ4)
+#if defined(NGT_PQ4) &&                                                               \
+    (defined(NGT_NO_SIMD) || (defined(__x86_64__) && defined(NGT_NO_AVX)) ||          \
+     (!defined(__x86_64__) && !defined(NGT_NEON)))
 
 #include "NGT/Common.h"
 #include "NGT/PrimitiveComparator.h"

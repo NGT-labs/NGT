@@ -445,6 +445,7 @@ class PrimitiveComparator {
   }
 #endif
 
+#ifdef NGT_BFLOAT
   inline static double compareL2(const bfloat16_t *a, const bfloat16_t *b, size_t size) {
     float32x4_t sum_vec = vdupq_n_f32(0.0f);
 
@@ -469,6 +470,7 @@ class PrimitiveComparator {
 
     return std::sqrt(sum);
   }
+#endif
 
   inline static double compareL2(const half_float::half *a, const half_float::half *b, size_t size) {
     double sum = 0.0;
