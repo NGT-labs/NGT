@@ -20,7 +20,7 @@
 
 #if defined(NGT_NO_SIMD)
 #include "NGT/PrimitiveComparatorNoArch.h"
-#elif defined(__x86_64__)
+#elif defined(__x86_64__) && !defined(NGT_NO_AVX)
 #include "NGT/PrimitiveComparatorX86.h"
 #elif defined(NGT_NEON)
 #include "NGT/PrimitiveComparatorArm.h"
