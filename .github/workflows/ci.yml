@@ -29,11 +29,17 @@ jobs:
       run: |
         echo "OpenMP_ROOT=$(brew --prefix libomp)" >> "$GITHUB_ENV"
 
-    - run: |
+    - name: Configure CMake
+      run: |
+        if [ "${{ runner.os }}" = "Linux" ]; then
+          RPATH='$ORIGIN/../lib'
+        else
+          RPATH='@loader_path/../lib'
+        fi
         cmake -S . -B build \
           -DCMAKE_INSTALL_PREFIX=$(pwd)/install \
           -DCMAKE_INSTALL_LIBDIR=lib \
-          -DCMAKE_INSTALL_RPATH="@loader_path/../lib" \
+          -DCMAKE_INSTALL_RPATH="$RPATH" \
           -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
           -DNGT_BFLOAT_DISABLED=ON
 
