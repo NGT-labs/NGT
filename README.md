@@ -235,12 +235,11 @@ Licensed under the Apache License, Version 2.0 (the "License"); you may not use 
 
 The holders of patents covering technologies used in this software will not assert those patent rights against users of this software, provided that the software is used in compliance with the Apache License, Version 2.0.
 
-Contributor License Agreement
------------------------------
 
-This project requires contributors to accept the terms in the [Contributor License Agreement (CLA)](https://gist.github.com/yahoojapanoss/9bf8afd6ea67f32d29b4082abf220340).
+Contributing
+------------
 
-Please note that contributors to the NGT repository on GitHub (https://github.com/yahoojapan/NGT) shall be deemed to have accepted the CLA without individual written agreements.
+Please refer to [CONTRIBUTING.md](CONTRIBUTING.md) before submitting a pull request.
 
 Contact Person
 --------------

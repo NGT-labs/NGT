@@ -236,12 +236,10 @@ Copyright (C) 2026 SAKURA internet Inc.
 
 本ソフトウェアで使用されている技術に関する特許権者は、本ソフトウェアが Apache License Version 2.0 に従って利用される限り、当該特許権を利用者に対して行使しません。
 
-貢献者ライセンス同意(CLA)
--------------------------
+コントリビューション
+--------------------
 
-本ソフトウェアへのソースコードのご提供者は[貢献者ライセンス](https://gist.github.com/yahoojapanoss/9bf8afd6ea67f32d29b4082abf220340)に同意して頂きます。
-
-なお、GitHub (https://github.com/yahoojapan/NGT) へのご提供の場合のみ、個別の同意書面なしに、上記貢献者ライセンスに同意して頂いたと見なしますので、ご注意ください。
+プルリクエストを送信する前に、[CONTRIBUTING.md](CONTRIBUTING.md) をご確認ください。
 
 お問い合わせ
 ------------
