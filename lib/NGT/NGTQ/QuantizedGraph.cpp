@@ -249,18 +249,41 @@ void NGTQG::Index::quantize(const std::string indexPath, size_t dimensionOfSubve
 }
 
 void NGTQG::Index::create(const std::string indexPath, QBG::BuildParameters &buildParameters) {
-  auto dimensionOfSubvector = buildParameters.creation.dimensionOfSubvector;
-  auto dimension            = buildParameters.creation.dimension;
-  if (dimension != 0 && buildParameters.creation.numOfSubvectors != 0) {
-    if (dimension % buildParameters.creation.numOfSubvectors != 0) {
+  NGT::Index index(indexPath);
+  NGT::Property ngtProperty;
+  index.getProperty(ngtProperty);
+  size_t indexDimension = ngtProperty.dimension;
+
+  size_t dimensionOfSubvector = buildParameters.creation.dimensionOfSubvector;
+  size_t numOfSubvectors      = buildParameters.creation.numOfSubvectors;
+
+  if (dimensionOfSubvector != 0 && numOfSubvectors != 0) {
+    if (indexDimension % dimensionOfSubvector != 0 ||
+        numOfSubvectors != indexDimension / dimensionOfSubvector) {
       std::stringstream msg;
-      msg << "NGTQBG:Index::create: Invalid dimension and local division No. " << dimension << ":"
-          << buildParameters.creation.numOfSubvectors;
+      msg << "NGTQG::Index::create: dimensionOfSubvector and numOfSubvectors are inconsistent. "
+          << "dimension=" << indexDimension << " dimensionOfSubvector=" << dimensionOfSubvector
+          << " numOfSubvectors=" << numOfSubvectors;
       NGTThrowException(msg);
     }
-    dimensionOfSubvector = dimension / buildParameters.creation.numOfSubvectors;
+  } else if (dimensionOfSubvector != 0) {
+    if (indexDimension % dimensionOfSubvector != 0) {
+      std::stringstream msg;
+      msg << "NGTQG::Index::create: dimensionOfSubvector cannot divide dimension. "
+          << "dimension=" << indexDimension << " dimensionOfSubvector=" << dimensionOfSubvector;
+      NGTThrowException(msg);
+    }
+  } else if (numOfSubvectors != 0) {
+    if (indexDimension % numOfSubvectors != 0) {
+      std::stringstream msg;
+      msg << "NGTQG::Index::create: numOfSubvectors cannot divide dimension. "
+          << "dimension=" << indexDimension << " numOfSubvectors=" << numOfSubvectors;
+      NGTThrowException(msg);
+    }
+    dimensionOfSubvector = indexDimension / numOfSubvectors;
   }
-  create(indexPath, dimensionOfSubvector, dimension);
+
+  create(indexPath, dimensionOfSubvector, buildParameters.creation.dimension);
   std::string quantizedIndexPath = indexPath + "/" + getQGDirectoryName();
   NGTQ::Index quantizedIndex(quantizedIndexPath);
   quantizedIndex.getQuantizer().property.orderedSearchRanking = buildParameters.creation.orderedSearchRanking;

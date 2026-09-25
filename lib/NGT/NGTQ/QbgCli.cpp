@@ -38,6 +38,8 @@ class QbgCliBuildParameters : public QBG::BuildParameters {
     creation.numOfObjects                   = args.getl("n", 0);
     creation.threadSize                     = args.getl("p", 24);
     creation.dimension                      = args.getl("d", 0);
+    creation.dimensionOfSubvector           = args.getl("Q", 0);
+    creation.numOfSubvectors                = args.getl("N", 0);
     auto clusterDataType                    = args.getString("C", "-");
     creation.scalarQuantizationClippingRate = args.getf("r", 0.0);
     creation.scalarQuantizationNoOfSamples  = args.getl("V", 0);
@@ -46,7 +48,6 @@ class QbgCliBuildParameters : public QBG::BuildParameters {
 #else
     creation.numOfLocalClusters = args.getl("c", 65000);
 #endif
-    creation.numOfSubvectors                  = args.getl("N", 0);
     creation.batchSize                        = args.getl("b", 1000);
     creation.localClusteringSampleCoefficient = args.getl("s", 10);
     {
@@ -777,8 +778,8 @@ void quantizeTree(const std::string &indexPath, int64_t maxObjectsPerNode, bool 
 #endif
 
 void QBG::CLI::createQG(NGT::Args &args) {
-  const std::string usage =
-      "Usage: qbg create-qg [-Q dimension-of-subvector] [-k max-objects-per-node] index";
+  const std::string usage = "Usage: qbg create-qg [-Q dimension-of-subvector | -N num-of-subvectors] [-k "
+                            "max-objects-per-node] index";
 
   QbgCliBuildParameters buildParameters(args);
   buildParameters.getCreationParameters();
