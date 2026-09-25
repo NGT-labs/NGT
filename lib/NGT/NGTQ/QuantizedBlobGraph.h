@@ -32,10 +32,11 @@ class CreationParameters {
  public:
   CreationParameters() { setDefault(); }
   void setDefault() {
-    numOfObjects       = 0;
-    threadSize         = 24;
-    numOfLocalClusters = 16;
-    dimension          = 0;
+    numOfObjects         = 0;
+    threadSize           = 24;
+    numOfLocalClusters   = 16;
+    dimension            = 0;
+    dimensionOfSubvector = 0;
 #ifdef NGTQ_QBG
     genuineDimension     = 0;
     dimensionOfSubvector = 1;
@@ -618,6 +619,35 @@ class Index : public NGTQ::Index {
   }
 
   void remove(std::vector<NGT::ObjectID> &ids) {
+    std::vector<uint32_t> succeededIDs;
+    std::vector<std::pair<NGT::ObjectID, std::string>> failedIDs;
+
+    for (auto id : ids) {
+      std::vector<uint32_t> singleID = {id};
+      try {
+        removeBody(singleID);
+        succeededIDs.push_back(id);
+      } catch (std::exception &err) {
+        failedIDs.emplace_back(id, err.what());
+      }
+    }
+
+    removedIDs.insert(removedIDs.end(), succeededIDs.begin(), succeededIDs.end());
+    std::sort(removedIDs.rbegin(), removedIDs.rend());
+    removedIDs.erase(std::unique(removedIDs.begin(), removedIDs.end()), removedIDs.end());
+
+    if (!failedIDs.empty()) {
+      std::stringstream msg;
+      msg << "remove: " << failedIDs.size() << " object(s) failed.";
+      for (auto &f : failedIDs) {
+        msg << " id=" << f.first << ":" << f.second;
+      }
+      NGTThrowException(msg);
+    }
+  }
+
+ private:
+  void removeBody(std::vector<NGT::ObjectID> &ids) {
     auto &quantizer = getQuantizer();
     auto &gcodebook = static_cast<NGT::GraphAndTreeIndex &>(quantizer.globalCodebookIndex.getIndex());
     for (auto id : ids) {
@@ -682,6 +712,7 @@ class Index : public NGTQ::Index {
     }
   }
 
+ public:
   void insertObjectsToBlob(NGT::ObjectID blobID,
                            std::vector<std::pair<std::vector<float>, size_t>> &objects) {
     auto &quantizer         = getQuantizer();

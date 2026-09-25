@@ -63,6 +63,7 @@
 #define NGTQ_BATCH_SIZE 2
 #define NGTQ_UINT4_OBJECT
 #define NGTQ_TOTAL_SCALE_OFFSET_COMPRESSION
+#define NGTQ_SATURATED_QUANTIZED_DISTANCE
 #if defined(NGT_AVX512)
 #define NGTQG_AVX512
 #elif defined(NGT_AVX2)
@@ -1428,7 +1429,7 @@ class QuantizedObjectDistance {
    public:
     DistanceLookupTableUint8() : localDistanceLookup(0) {
 #ifdef NGT_QUANTIZED_DISTANCE_SCALE_FACTOR
-      scaleFactor = 2;
+      scaleFactor = 1.0;
 #endif
     }
     ~DistanceLookupTableUint8() {
@@ -2450,15 +2451,23 @@ template <typename T> class QuantizedObjectDistanceFloat : public QuantizedObjec
     int outerLoops             = (range256 - 1 + totalSize) / range256;
     constexpr size_t lutStride = 16 * 4;
 
-    const __m512i mask512x0F = _mm512_set1_epi32(0x0F0F0F0F);
+    const __m512i mask512x0F   = _mm512_set1_epi32(0x0F0F0F0F);
+    const __m512i mask512x00FF = _mm512_set1_epi16(0x00FF);
 
     uint8_t *dists                             = reinterpret_cast<uint8_t *>(distances);
     constexpr size_t distanceBytesPerOuterLoop = sizeof(uint16_t) * 32;
     for (int obj = 0; obj < outerLoops; obj++) {
-      __m512i upperA         = _mm512_setzero_si512();
-      __m512i upperB         = _mm512_setzero_si512();
-      __m512i lowerA         = _mm512_setzero_si512();
-      __m512i lowerB         = _mm512_setzero_si512();
+#ifdef NGTQ_SATURATED_QUANTIZED_DISTANCE
+      __m512i lowerA = _mm512_setzero_si512();
+      __m512i upperA = _mm512_setzero_si512();
+      __m512i lowerB = _mm512_setzero_si512();
+      __m512i upperB = _mm512_setzero_si512();
+#else
+      __m512i upperA = _mm512_setzero_si512();
+      __m512i upperB = _mm512_setzero_si512();
+      __m512i lowerA = _mm512_setzero_si512();
+      __m512i lowerB = _mm512_setzero_si512();
+#endif
       uint8_t *lutPtr        = lut;
       uint8_t *quantPtr      = localID;
       uint8_t *quantEndInner = localID + range512;
@@ -2476,23 +2485,47 @@ template <typename T> class QuantizedObjectDistanceFloat : public QuantizedObjec
 
         __m512i resultLower = _mm512_shuffle_epi8(lookupTable, lower4bit);
         __m512i resultUpper = _mm512_shuffle_epi8(lookupTable, upper4bit);
-        __m512i newLowerB   = _mm512_add_epi16(lowerB, resultLower);
-        __m512i newLowerA   = _mm512_add_epi16(lowerA, resultUpper);
+#ifdef NGTQ_SATURATED_QUANTIZED_DISTANCE
+        lowerB = _mm512_adds_epu16(lowerB, _mm512_and_si512(resultLower, mask512x00FF));
+        upperB = _mm512_adds_epu16(upperB, _mm512_srli_epi16(resultLower, 8));
+        lowerA = _mm512_adds_epu16(lowerA, _mm512_and_si512(resultUpper, mask512x00FF));
+        upperA = _mm512_adds_epu16(upperA, _mm512_srli_epi16(resultUpper, 8));
+#else
+        __m512i newLowerB = _mm512_add_epi16(lowerB, resultLower);
+        __m512i newLowerA = _mm512_add_epi16(lowerA, resultUpper);
 
         __m512i upperByteB = _mm512_srli_epi16(resultLower, 8);
         __m512i upperByteA = _mm512_srli_epi16(resultUpper, 8);
 
         __m512i newUpperB = _mm512_add_epi16(upperB, upperByteB);
         __m512i newUpperA = _mm512_add_epi16(upperA, upperByteA);
+        lowerB            = newLowerB;
+        upperB            = newUpperB;
+        lowerA            = newLowerA;
+        upperA            = newUpperA;
+#endif
 
         quantPtr += step512;
-
-        lowerB = newLowerB;
-        upperB = newUpperB;
-        lowerA = newLowerA;
-        upperA = newUpperA;
       }
 
+#ifdef NGTQ_SATURATED_QUANTIZED_DISTANCE
+      __m256i v256 = _mm256_adds_epu16(_mm512_castsi512_si256(upperB), _mm512_extracti64x4_epi64(upperB, 1));
+      __m128i upperB256 = _mm_adds_epu16(_mm256_castsi256_si128(v256), _mm256_extracti128_si256(v256, 1));
+
+      v256 = _mm256_adds_epu16(_mm512_castsi512_si256(upperA), _mm512_extracti64x4_epi64(upperA, 1));
+      __m128i upperA256 = _mm_adds_epu16(_mm256_castsi256_si128(v256), _mm256_extracti128_si256(v256, 1));
+
+      v256 = _mm256_adds_epu16(_mm512_castsi512_si256(lowerB), _mm512_extracti64x4_epi64(lowerB, 1));
+      __m128i lowerB256 = _mm_adds_epu16(_mm256_castsi256_si128(v256), _mm256_extracti128_si256(v256, 1));
+
+      v256 = _mm256_adds_epu16(_mm512_castsi512_si256(lowerA), _mm512_extracti64x4_epi64(lowerA, 1));
+      __m128i lowerA256 = _mm_adds_epu16(_mm256_castsi256_si128(v256), _mm256_extracti128_si256(v256, 1));
+
+      _mm_storeu_si128(reinterpret_cast<__m128i *>(dists + 0x00), lowerB256);
+      _mm_storeu_si128(reinterpret_cast<__m128i *>(dists + 0x10), lowerA256);
+      _mm_storeu_si128(reinterpret_cast<__m128i *>(dists + 0x20), upperB256);
+      _mm_storeu_si128(reinterpret_cast<__m128i *>(dists + 0x30), upperA256);
+#else
       __m512i correctionB = _mm512_slli_epi16(upperB, 8);
       lowerB              = _mm512_sub_epi16(lowerB, correctionB);
 
@@ -2514,6 +2547,7 @@ template <typename T> class QuantizedObjectDistanceFloat : public QuantizedObjec
       _mm_storeu_si128(reinterpret_cast<__m128i *>(dists + 0x10), lowerA256);
       _mm_storeu_si128(reinterpret_cast<__m128i *>(dists + 0x20), upperB256);
       _mm_storeu_si128(reinterpret_cast<__m128i *>(dists + 0x30), upperA256);
+#endif
       dists += distanceBytesPerOuterLoop;
       localID += range512;
     }
@@ -2533,16 +2567,24 @@ template <typename T> class QuantizedObjectDistanceFloat : public QuantizedObjec
     constexpr size_t lutStride256 = 16 * 2;
     constexpr size_t step256      = 32;
 
-    const __m256i mask256x0F = _mm256_set1_epi32(0x0F0F0F0F);
+    const __m256i mask256x0F   = _mm256_set1_epi32(0x0F0F0F0F);
+    const __m256i mask256x00FF = _mm256_set1_epi16(0x00FF);
 
     uint8_t *dists                             = reinterpret_cast<uint8_t *>(distances);
     constexpr size_t distanceBytesPerOuterLoop = sizeof(uint16_t) * 32;
 
     for (int obj = 0; obj < outerLoops; obj++) {
+#ifdef NGTQ_SATURATED_QUANTIZED_DISTANCE
+      __m256i lowerA = _mm256_setzero_si256();
+      __m256i upperA = _mm256_setzero_si256();
+      __m256i lowerB = _mm256_setzero_si256();
+      __m256i upperB = _mm256_setzero_si256();
+#else
       __m256i upperA = _mm256_setzero_si256();
       __m256i upperB = _mm256_setzero_si256();
       __m256i lowerA = _mm256_setzero_si256();
       __m256i lowerB = _mm256_setzero_si256();
+#endif
 
       uint8_t *lutPtr        = lut;
       uint8_t *quantPtr      = localID;
@@ -2563,6 +2605,12 @@ template <typename T> class QuantizedObjectDistanceFloat : public QuantizedObjec
         __m256i resultLower = _mm256_shuffle_epi8(lookupTable, lower4bit);
         __m256i resultUpper = _mm256_shuffle_epi8(lookupTable, upper4bit);
 
+#ifdef NGTQ_SATURATED_QUANTIZED_DISTANCE
+        lowerB = _mm256_adds_epu16(lowerB, _mm256_and_si256(resultLower, mask256x00FF));
+        upperB = _mm256_adds_epu16(upperB, _mm256_srli_epi16(resultLower, 8));
+        lowerA = _mm256_adds_epu16(lowerA, _mm256_and_si256(resultUpper, mask256x00FF));
+        upperA = _mm256_adds_epu16(upperA, _mm256_srli_epi16(resultUpper, 8));
+#else
         __m256i newLowerB = _mm256_add_epi16(lowerB, resultLower);
         __m256i newLowerA = _mm256_add_epi16(lowerA, resultUpper);
 
@@ -2572,14 +2620,25 @@ template <typename T> class QuantizedObjectDistanceFloat : public QuantizedObjec
         __m256i newUpperB = _mm256_add_epi16(upperB, upperByteB);
         __m256i newUpperA = _mm256_add_epi16(upperA, upperByteA);
 
-        quantPtr += step256;
-
         lowerB = newLowerB;
         upperB = newUpperB;
         lowerA = newLowerA;
         upperA = newUpperA;
+#endif
+        quantPtr += step256;
       }
 
+#ifdef NGTQ_SATURATED_QUANTIZED_DISTANCE
+      __m128i upperB128 = _mm_adds_epu16(_mm256_castsi256_si128(upperB), _mm256_extracti128_si256(upperB, 1));
+      __m128i upperA128 = _mm_adds_epu16(_mm256_castsi256_si128(upperA), _mm256_extracti128_si256(upperA, 1));
+      __m128i lowerB128 = _mm_adds_epu16(_mm256_castsi256_si128(lowerB), _mm256_extracti128_si256(lowerB, 1));
+      __m128i lowerA128 = _mm_adds_epu16(_mm256_castsi256_si128(lowerA), _mm256_extracti128_si256(lowerA, 1));
+
+      _mm_storeu_si128(reinterpret_cast<__m128i *>(dists + 0x00), lowerB128);
+      _mm_storeu_si128(reinterpret_cast<__m128i *>(dists + 0x10), lowerA128);
+      _mm_storeu_si128(reinterpret_cast<__m128i *>(dists + 0x20), upperB128);
+      _mm_storeu_si128(reinterpret_cast<__m128i *>(dists + 0x30), upperA128);
+#else
       __m256i correctionB = _mm256_slli_epi16(upperB, 8);
       lowerB              = _mm256_sub_epi16(lowerB, correctionB);
 
@@ -2595,6 +2654,7 @@ template <typename T> class QuantizedObjectDistanceFloat : public QuantizedObjec
       _mm_storeu_si128(reinterpret_cast<__m128i *>(dists + 0x10), lowerA128);
       _mm_storeu_si128(reinterpret_cast<__m128i *>(dists + 0x20), upperB128);
       _mm_storeu_si128(reinterpret_cast<__m128i *>(dists + 0x30), upperA128);
+#endif
 
       dists += distanceBytesPerOuterLoop;
       localID += range512;

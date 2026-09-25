@@ -600,7 +600,7 @@ public:
     defaultProbe = 10;
 #endif
 #ifdef NGT_QUANTIZED_DISTANCE_SCALE_FACTOR
-    defaultDistanceLutScaleFactor = 2.5;
+    defaultDistanceLutScaleFactor = 1.0;
 #endif
     if (logDisabled) {
       NGT::Index::disableLog();

@@ -24,6 +24,8 @@ if static_library_option in sys.argv:
     print('use the NGT static library')
     sys.argv.remove(static_library_option)
     static_library = True
+if os.environ.get('NGT_BUILD_STATIC') == '1':
+    static_library = True
 
 static_library_native = False
 if static_library_native_option in sys.argv:
@@ -109,9 +111,10 @@ args = {
 }
 
 if sys.version_info.major >= 3:
+    ngt_include_dir = os.environ.get('NGT_INCLUDE_DIR', '/usr/local/include')
     if static_library or included_library or shared_library_without_avx:
         params = {
-            'include_dirs': ['/usr/local/include',
+            'include_dirs': [ngt_include_dir,
                              pybind11.get_include(True),
                              pybind11.get_include(False)],
             'extra_compile_args': ['-std=c++17', '-Ofast',
@@ -122,7 +125,7 @@ if sys.version_info.major >= 3:
         }
     elif static_library_avx2 or shared_library_avx2:
         params = {
-            'include_dirs': ['/usr/local/include',
+            'include_dirs': [ngt_include_dir,
                              pybind11.get_include(True),
                              pybind11.get_include(False)],
             'extra_compile_args': ['-std=c++17', '-Ofast',
@@ -133,7 +136,7 @@ if sys.version_info.major >= 3:
         }
     else:
         params = {
-            'include_dirs': ['/usr/local/include',
+            'include_dirs': [ngt_include_dir,
                              pybind11.get_include(True),
                              pybind11.get_include(False)],
             'extra_compile_args': ['-std=c++17', '-Ofast', '-march=native', '-DNDEBUG', '-fvisibility-inlines-hidden', '-flto'],
@@ -145,6 +148,8 @@ if sys.version_info.major >= 3:
     else:
         params['extra_compile_args'].append('-Xpreprocessor')
         params['extra_compile_args'].append('-fopenmp')
+    # drop empty args (e.g. the platform-dependent -march flag) which g++ rejects
+    params['extra_compile_args'] = [arg for arg in params['extra_compile_args'] if arg]
 
     shared_lib_params = {
         'library_dirs': ['/usr/local/lib', '/usr/local/lib64'],
@@ -156,9 +161,10 @@ if sys.version_info.major >= 3:
         'libraries': ['ngt', openmplib, 'blas', 'lapack'],
         'extra_link_args': ['-static-libstdc++']
     }
+    static_lib_path = os.environ.get('NGT_STATIC_LIBRARY_PATH', '../build-ngtpy-release/lib/NGT/libngt.a')
     static_lib_params = {
         'library_dirs': ['/usr/local/lib', '/usr/local/lib64'],
-        'extra_objects': ['../build-ngtpy-release/lib/NGT/libngt.a'],
+        'extra_objects': [static_lib_path],
         'libraries': [openmplib, 'blas', 'lapack'],
     }
     if static_library or static_library_native or static_library_avx2:

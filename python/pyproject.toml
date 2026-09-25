@@ -1,3 +1,39 @@
 [build-system]
 requires = ["setuptools", "pybind11"]
 build-backend = "setuptools.build_meta"
+
+[tool.cibuildwheel]
+build = "cp311-* cp312-* cp313-* cp314-*"
+
+[tool.cibuildwheel.macos]
+archs = ["arm64"]
+
+[tool.cibuildwheel.macos.environment]
+NGT_STATIC_LIBRARY_PATH = "libngt.a"
+NGT_INCLUDE_DIR = "lib"
+NGT_BUILD_STATIC = "1"
+OpenMP_ROOT = "/opt/homebrew/opt/libomp"
+MACOSX_DEPLOYMENT_TARGET = "26.0"
+
+[tool.cibuildwheel.linux]
+# Mirrors the established distribution recipe in python/pypi/manylinux
+# (Dockerfile.manylinux_2_28 + work/manylinux_2_28.sh): build libngt.a
+# inside the container. NGT_AVX_DISABLED + NGT_MARCH_NATIVE_DISABLED give
+# the portable baseline build (-O2, no -march=native) used for the
+# baseline `ngt` package. ngt-src/ is staged next to the package.
+# manylinux (glibc) only — no musllinux, matching the old procedure.
+build = "cp311*-manylinux* cp312*-manylinux* cp313*-manylinux* cp314*-manylinux*"
+manylinux-aarch64-image = "manylinux_2_28"
+manylinux-x86_64-image = "manylinux_2_28"
+before-all = [
+  "dnf install -y cmake blas-devel lapack-devel",
+  "cmake -S ngt-src -B build-ci -DCMAKE_BUILD_TYPE=Release -DNGT_AVX_DISABLED=ON -DNGT_MARCH_NATIVE_DISABLED=ON",
+  "cmake --build build-ci --parallel $(nproc)",
+  "cp build-ci/lib/NGT/libngt.a .",
+  "cp build-ci/lib/NGT/defines.h build-ci/lib/NGT/version_defs.h ngt-src/lib/NGT/",
+]
+
+[tool.cibuildwheel.linux.environment]
+NGT_STATIC_LIBRARY_PATH = "libngt.a"
+NGT_INCLUDE_DIR = "ngt-src/lib"
+NGT_BUILD_STATIC = "1"

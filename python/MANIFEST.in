@@ -1,2 +1,4 @@
 include VERSION
 include LICENSE
+include libngt.a
+recursive-include lib/NGT *.h *.hpp
