@@ -5,5 +5,5 @@ if(UNIX OR WIN32)
 
 	add_executable(qbg-capi qbg-capi.cpp)
 	add_dependencies(qbg-capi ngt)
-	target_link_libraries(qbg-capi ngt pthread)
+	target_link_libraries(qbg-capi ngt Threads::Threads)
 endif()

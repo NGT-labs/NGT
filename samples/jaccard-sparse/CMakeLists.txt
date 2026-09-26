@@ -5,5 +5,5 @@ if(UNIX OR WIN32)
 
 	add_executable(jaccard-sparse jaccard-sparse.cpp)
 	add_dependencies(jaccard-sparse ngt)
-	target_link_libraries(jaccard-sparse ngt pthread)
+	target_link_libraries(jaccard-sparse ngt Threads::Threads)
 endif()

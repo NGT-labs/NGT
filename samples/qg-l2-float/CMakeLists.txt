@@ -5,5 +5,5 @@ if(UNIX OR WIN32)
 
 	add_executable(qg-l2-float qg-l2-float.cpp)
 	add_dependencies(qg-l2-float ngt)
-	target_link_libraries(qg-l2-float ngt pthread)
+	target_link_libraries(qg-l2-float ngt Threads::Threads)
 endif()

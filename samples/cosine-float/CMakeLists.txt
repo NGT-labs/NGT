@@ -5,5 +5,5 @@ if(UNIX OR WIN32)
 
 	add_executable(cosine-float cosine-float.cpp)
 	add_dependencies(cosine-float ngt)
-	target_link_libraries(cosine-float ngt pthread)
+	target_link_libraries(cosine-float ngt Threads::Threads)
 endif()
