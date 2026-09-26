@@ -40,7 +40,6 @@
 #include <type_traits>
 #include <limits>
 
-#include <execinfo.h>
 #include <sys/time.h>
 #include <fcntl.h>
 #if defined(__linux__)
