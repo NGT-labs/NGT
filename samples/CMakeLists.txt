@@ -1,4 +1,4 @@
-if( ${UNIX} )
+if(UNIX OR WIN32)
 	include_directories("${PROJECT_SOURCE_DIR}/lib" "${PROJECT_BINARY_DIR}/lib/")
 	link_directories("${PROJECT_BINARY_DIR}/lib/NGT")
 	add_subdirectory("${PROJECT_SOURCE_DIR}/samples/hamming-uint8")
