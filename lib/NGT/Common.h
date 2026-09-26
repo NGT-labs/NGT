@@ -51,6 +51,7 @@
 #include "x86simdsort.h"
 #endif
 #include "NGT/SharedMemoryAllocator.h"
+#include "NGT/FileIO.h"
 
 #ifdef NGT_HALF_FLOAT
 #include "NGT/half.hpp"
@@ -763,7 +764,7 @@ class CpuInfo {
 class StdOstreamRedirector {
  public:
   StdOstreamRedirector(bool e = false, const std::string path = "/dev/null",
-                       mode_t m = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH, int f = 2) {
+                       unsigned int m = 0644, int f = 2) {
     logFilePath = path;
     mode        = m;
     logFD       = -1;
@@ -783,11 +784,7 @@ class StdOstreamRedirector {
     if (!enabled) {
       return;
     }
-    if (logFilePath == "/dev/null") {
-      logFD = open(logFilePath.c_str(), O_WRONLY | O_APPEND, mode);
-    } else {
-      logFD = open(logFilePath.c_str(), O_CREAT | O_WRONLY | O_APPEND, mode);
-    }
+    logFD = NGT::FileIO::openForLogging(logFilePath, mode);
     if (logFD < 0) {
       std::cerr << "Logger: Cannot begin logging." << std::endl;
       logFD = -1;
@@ -811,7 +808,7 @@ class StdOstreamRedirector {
   }
 
   std::string logFilePath;
-  mode_t mode;
+  unsigned int mode;
   int logFD;
   int savedFdNo;
   int fdNo;
