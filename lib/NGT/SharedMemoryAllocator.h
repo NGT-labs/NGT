@@ -17,7 +17,9 @@
 #pragma once
 
 #include "NGT/defines.h"
+#ifdef NGT_SHARED_MEMORY_ALLOCATOR
 #include "NGT/MmapManager.h"
+#endif
 
 #include <unistd.h>
 #include <cstdlib>
@@ -29,7 +31,9 @@
 #include <exception>
 #include <cassert>
 
+#ifdef NGT_SHARED_MEMORY_ALLOCATOR
 #define MMAP_MANAGER
+#endif
 
 ///////////////////////////////////////////////////////////////////////
 class SharedMemoryAllocator {
