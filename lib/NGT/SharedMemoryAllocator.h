@@ -159,31 +159,22 @@ class SharedMemoryAllocator {
     delete mmanager;
 #endif
   };
+#if defined(MMAP_MANAGER) && !defined(NOT_USE_MMAP_ALLOCATOR)
   void setEntry(void *entry) {
-#ifdef MMAP_MANAGER
     mmanager->setEntryHook(entry);
-#endif
   }
   void *getAddr(off_t oft) {
     if (oft == 0) {
       return 0;
     }
     assert(oft > 0);
-#if defined(MMAP_MANAGER) && !defined(NOT_USE_MMAP_ALLOCATOR)
     return mmanager->getAbsAddr(oft);
-#else
-    return (void *)oft;
-#endif
   }
   off_t getOffset(void *adr) {
     if (adr == 0) {
       return 0;
     }
-#if defined(MMAP_MANAGER) && !defined(NOT_USE_MMAP_ALLOCATOR)
     return mmanager->getRelAddr(adr);
-#else
-    return (off_t)adr;
-#endif
   }
   size_t getMemorySize(GetMemorySizeType t) {
     switch (t) {
@@ -196,6 +187,7 @@ class SharedMemoryAllocator {
   size_t getTotalSize() { return mmanager->getTotalSize(); }
   size_t getAllocatedSize() { return mmanager->getUseSize(); }
   size_t getFreedSize() { return mmanager->getFreeSize(); }
+#endif
 
   bool isValid;
   std::string file;
