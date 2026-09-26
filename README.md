@@ -91,6 +91,16 @@ Installation
       $ make
       $ make install
 
+#### On Windows
+
+Windows support is available. The standard in-memory index creation and search workflows have been validated. Windows builds currently use static linking; DLL export support and shared memory (memory mapped file) allocators are not included yet.
+
+      > cd NGT
+      > mkdir build
+      > cd build
+      > cmake -DNGT_QBG_DISABLED=ON -G Ninja ..
+      > ninja
+
 ### Pre-Built
 
 #### On macOS
@@ -102,7 +112,7 @@ NGT (Graph and tree-based method)
 
 Key Features
 ------------
-- Supported operating systems: Linux and macOS
+- Supported operating systems: Linux, macOS, and Windows
 - Object additional registration and removal are available.
 - Objects beyond the memory size can be handled using [the shared memory (memory mapped file) option](README.md#shared-memory-use).
 - Supported distance functions: L1, L2, Cosine similarity, Angular, Hamming, Jaccard, Poincare, Lorentz, and Inner product

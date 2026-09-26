@@ -17,18 +17,23 @@
 #pragma once
 
 #include "NGT/defines.h"
+#ifdef NGT_SHARED_MEMORY_ALLOCATOR
 #include "NGT/MmapManager.h"
+#endif
 
 #include <unistd.h>
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include "NGT/SystemInfo.h"
 #include <iostream>
 #include <vector>
 #include <exception>
 #include <cassert>
 
+#ifdef NGT_SHARED_MEMORY_ALLOCATOR
 #define MMAP_MANAGER
+#endif
 
 ///////////////////////////////////////////////////////////////////////
 class SharedMemoryAllocator {
@@ -107,8 +112,8 @@ class SharedMemoryAllocator {
     if (msize == 0) {
       msize = NGT_SHARED_MEMORY_MAX_SIZE;
     }
-    size_t bsize  = msize * 1048576 / sysconf(_SC_PAGESIZE) + 1; // 1048576=1M
-    uint64_t size = bsize * sysconf(_SC_PAGESIZE);
+    size_t bsize  = msize * 1048576 / NGT::SystemInfo::getPageSize() + 1; // 1048576=1M
+    uint64_t size = bsize * NGT::SystemInfo::getPageSize();
     MemoryManager::init_option_st option;
     MemoryManager::MmapManager::setDefaultOptionValue(option);
     option.use_expand = true;
@@ -154,31 +159,22 @@ class SharedMemoryAllocator {
     delete mmanager;
 #endif
   };
+#if defined(MMAP_MANAGER) && !defined(NOT_USE_MMAP_ALLOCATOR)
   void setEntry(void *entry) {
-#ifdef MMAP_MANAGER
     mmanager->setEntryHook(entry);
-#endif
   }
   void *getAddr(off_t oft) {
     if (oft == 0) {
       return 0;
     }
     assert(oft > 0);
-#if defined(MMAP_MANAGER) && !defined(NOT_USE_MMAP_ALLOCATOR)
     return mmanager->getAbsAddr(oft);
-#else
-    return (void *)oft;
-#endif
   }
   off_t getOffset(void *adr) {
     if (adr == 0) {
       return 0;
     }
-#if defined(MMAP_MANAGER) && !defined(NOT_USE_MMAP_ALLOCATOR)
     return mmanager->getRelAddr(adr);
-#else
-    return (off_t)adr;
-#endif
   }
   size_t getMemorySize(GetMemorySizeType t) {
     switch (t) {
@@ -191,6 +187,7 @@ class SharedMemoryAllocator {
   size_t getTotalSize() { return mmanager->getTotalSize(); }
   size_t getAllocatedSize() { return mmanager->getUseSize(); }
   size_t getFreedSize() { return mmanager->getFreeSize(); }
+#endif
 
   bool isValid;
   std::string file;

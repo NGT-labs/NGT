@@ -60,7 +60,7 @@ bool MmapManager::init(const std::string &filePath, size_t size, const init_opti
       std::cerr << "too long filepath" << std::endl;
       return false;
     }
-    if ((size % sysconf(_SC_PAGESIZE) != 0) || (size < MMAP_LOWER_SIZE)) {
+    if ((size % NGT::SystemInfo::getPageSize() != 0) || (size < MMAP_LOWER_SIZE)) {
       std::cerr << "input size error" << std::endl;
       return false;
     }
