@@ -4,6 +4,6 @@ if(UNIX OR WIN32)
         link_directories("${PROJECT_SOURCE_DIR}/lib/NGT")
 
 	add_executable(qbg-capi qbg-capi.cpp)
-	add_dependencies(qbg-capi ngt)
-	target_link_libraries(qbg-capi ngt Threads::Threads)
+	add_dependencies(qbg-capi NGT::NGT)
+	target_link_libraries(qbg-capi NGT::NGT Threads::Threads)
 endif()

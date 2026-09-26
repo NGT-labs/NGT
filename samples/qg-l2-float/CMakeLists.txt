@@ -4,6 +4,6 @@ if(UNIX OR WIN32)
         link_directories("${PROJECT_SOURCE_DIR}/lib/NGT")
 
 	add_executable(qg-l2-float qg-l2-float.cpp)
-	add_dependencies(qg-l2-float ngt)
-	target_link_libraries(qg-l2-float ngt Threads::Threads)
+	add_dependencies(qg-l2-float NGT::NGT)
+	target_link_libraries(qg-l2-float NGT::NGT Threads::Threads)
 endif()

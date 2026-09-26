@@ -4,6 +4,6 @@ if(UNIX OR WIN32)
         link_directories("${PROJECT_SOURCE_DIR}/lib/NGT")
 
 	add_executable(l2-uint8 l2-uint8.cpp)
-	add_dependencies(l2-uint8 ngt)
-	target_link_libraries(l2-uint8 ngt Threads::Threads)
+	add_dependencies(l2-uint8 NGT::NGT)
+	target_link_libraries(l2-uint8 NGT::NGT Threads::Threads)
 endif()
