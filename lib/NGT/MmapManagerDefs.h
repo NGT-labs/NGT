@@ -19,13 +19,14 @@
 #include "MmapManager.h"
 
 #include <unistd.h>
+#include "NGT/SystemInfo.h"
 
 namespace MemoryManager {
 const uint64_t MMAP_MANAGER_VERSION = 5;
 
 const bool MMAP_DEFAULT_ALLOW_EXPAND     = false;
 const uint64_t MMAP_CNTL_FILE_RANGE      = 16;
-const size_t MMAP_CNTL_FILE_SIZE         = MMAP_CNTL_FILE_RANGE * sysconf(_SC_PAGESIZE);
+const size_t MMAP_CNTL_FILE_SIZE         = MMAP_CNTL_FILE_RANGE * NGT::SystemInfo::getPageSize();
 const uint64_t MMAP_MAX_FILE_NAME_LENGTH = 1024;
 const std::string MMAP_CNTL_FILE_SUFFIX  = "c";
 

@@ -23,6 +23,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include "NGT/SystemInfo.h"
 #include <iostream>
 #include <vector>
 #include <exception>
@@ -107,8 +108,8 @@ class SharedMemoryAllocator {
     if (msize == 0) {
       msize = NGT_SHARED_MEMORY_MAX_SIZE;
     }
-    size_t bsize  = msize * 1048576 / sysconf(_SC_PAGESIZE) + 1; // 1048576=1M
-    uint64_t size = bsize * sysconf(_SC_PAGESIZE);
+    size_t bsize  = msize * 1048576 / NGT::SystemInfo::getPageSize() + 1; // 1048576=1M
+    uint64_t size = bsize * NGT::SystemInfo::getPageSize();
     MemoryManager::init_option_st option;
     MemoryManager::MmapManager::setDefaultOptionValue(option);
     option.use_expand = true;
