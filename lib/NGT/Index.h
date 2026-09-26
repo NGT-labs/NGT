@@ -21,6 +21,7 @@
 #include <vector>
 #include <map>
 #include <set>
+#include "NGT/FileSystem.h"
 #include <bitset>
 #include <iomanip>
 #include <unordered_set>
@@ -556,11 +557,7 @@ class Index {
   void save(const std::string &indexPath) { saveIndex(indexPath); }
 #endif
   static void mkdir(const std::string &dir) {
-    if (::mkdir(dir.c_str(), S_IRWXU | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH) != 0) {
-      std::stringstream msg;
-      msg << "NGT::Index::mkdir: Cannot make the specified directory. " << dir;
-      NGTThrowException(msg);
-    }
+    NGT::FileSystem::makeDirectory(dir);
   }
   static void create(const std::string &database, NGT::Property &prop, bool redirect = false) {
     createGraphAndTree(database, prop, redirect);
