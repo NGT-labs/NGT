@@ -55,13 +55,34 @@ NGT::Command::CreateParameters::CreateParameters(Args &args) {
   } catch (...) {
   }
 
-  verbose = !args.getBool("v");
+  verbose        = !args.getBool("v");
+  char graphType = args.getChar("g", 'a');
+  switch (graphType) {
+  case 'a': property.graphType = NGT::Property::GraphType::GraphTypeANNG; break;
+  case 'k': property.graphType = NGT::Property::GraphType::GraphTypeKNNG; break;
+  case 'b': property.graphType = NGT::Property::GraphType::GraphTypeBKNNG; break;
+  case 'd': property.graphType = NGT::Property::GraphType::GraphTypeDNNG; break;
+  case 'o': property.graphType = NGT::Property::GraphType::GraphTypeONNG; break;
+  case 'i': property.graphType = NGT::Property::GraphType::GraphTypeIANNG; break;
+  case 'r': property.graphType = NGT::Property::GraphType::GraphTypeRANNG; break;
+  case 'R': property.graphType = NGT::Property::GraphType::GraphTypeRIANNG; break;
+  case 's': property.graphType = NGT::Property::GraphType::GraphTypeSNNG; break;
+  default:
+    std::stringstream msg;
+    msg << "Command::CreateParameter: Error: Invalid graph type. " << graphType;
+    NGTThrowException(msg);
+  }
+
   {
     string str                      = args.getString("E", "-");
     property.edgeSizeForCreation    = 10;
     property.minEdgeSizeForCreation = 10;
     property.maxEdgeSizeForCreation = 300;
-    property.searchMultiplier       = 0.0;
+    property.searchMultiplier       = 4.5;
+    property.searchTraceRatio       = 0;
+    if (property.graphType == NGT::Property::GraphType::GraphTypeSNNG) {
+      property.edgeSizeForCreation = 100;
+    }
     if (str != "-") {
       vector<string> tokens;
       NGT::Common::tokenize(str, tokens, ":");
@@ -131,24 +152,6 @@ NGT::Command::CreateParameters::CreateParameters(Args &args) {
 
   property.objectAlignment = args.getChar("A", 'f') == 't' ? NGT::Property::ObjectAlignmentTrue
                                                            : NGT::Property::ObjectAlignmentFalse;
-
-  char graphType = args.getChar("g", 'a');
-  switch (graphType) {
-  case 'a': property.graphType = NGT::Property::GraphType::GraphTypeANNG; break;
-  case 'k': property.graphType = NGT::Property::GraphType::GraphTypeKNNG; break;
-  case 'b': property.graphType = NGT::Property::GraphType::GraphTypeBKNNG; break;
-  case 'd': property.graphType = NGT::Property::GraphType::GraphTypeDNNG; break;
-  case 'o': property.graphType = NGT::Property::GraphType::GraphTypeONNG; break;
-  case 'i': property.graphType = NGT::Property::GraphType::GraphTypeIANNG; break;
-  case 'r': property.graphType = NGT::Property::GraphType::GraphTypeRANNG; break;
-  case 'R': property.graphType = NGT::Property::GraphType::GraphTypeRIANNG; break;
-  case 's': property.graphType = NGT::Property::GraphType::GraphTypeSNNG; break;
-  default:
-    std::stringstream msg;
-    msg << "Command::CreateParameter: Error: Invalid graph type. " << graphType;
-    NGTThrowException(msg);
-  }
-
   if (property.graphType == NGT::Property::GraphType::GraphTypeANNG ||
       property.graphType == NGT::Property::GraphType::GraphTypeONNG ||
       property.graphType == NGT::Property::GraphType::GraphTypeIANNG ||

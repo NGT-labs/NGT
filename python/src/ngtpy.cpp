@@ -29,6 +29,10 @@
 #include	<pybind11/stl.h>
 #include	<pybind11/numpy.h>
 
+#ifdef __GLIBC__
+#include	<malloc.h>
+#endif
+
 namespace py = pybind11;
 
 class BatchResults {
@@ -1164,10 +1168,18 @@ public:
 };
 #endif // NGTQ_QBG
 
+void releaseMemory() {
+#ifdef __GLIBC__
+    malloc_trim(0);
+#endif
+}
+
 PYBIND11_MODULE(ngtpy, m) {
     m.doc() = "ngt python";
 
     m.attr("__version__") = NGT_VERSION;
+
+    m.def("releaseMemory", &releaseMemory);
 
     m.def("create", &::Index::create,
           py::arg("path"),
