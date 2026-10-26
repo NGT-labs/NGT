@@ -12,6 +12,7 @@ Supported by <a href="https://www.sakura.ad.jp/corporate/en/"><img src="./assets
 
 News
 ----
+- 10/26/2026 NGT is now available as a vector store for LlamaIndex and can be installed from [PyPI](https://pypi.org/project/llama-index-vector-stores-ngt/).
 - 05/26/2025 Product quantization is now available as a data type for graph indices. (v2.4.0)
 - 10/29/2024 Scalar quantization is now available as a data type for graph indices and QBG. (v2.3.0)
 - 04/10/2024 Inner product (or dot product) is now available. (v2.1.0)
@@ -93,7 +94,7 @@ Installation
       $ make
       $ make install
 
-#### On Windows
+#### On Windows(Cygwin) (Thanks [Naimur](https://github.com/NaimurRahmannn)!)
 
 Windows support currently targets **MinGW-w64 GCC** (via **MSYS2 / UCRT64**). Native Microsoft Visual C++ (MSVC) is not currently supported and is planned as a future enhancement. `-DNGT_QBG_DISABLED=ON` is required. The standard in-memory index creation and search workflows are supported. Windows builds currently use static linking for the CLI; DLL export annotations and shared memory (memory-mapped file) allocators are not included yet.
 

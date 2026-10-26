@@ -12,8 +12,9 @@ Supported by <a href="https://www.sakura.ad.jp/corporate/"><img src="./assets/3-
 
 ニュース
 -------
-- 05/26/2025 直積量子化がグラフのデータタイプとして利用可能になりました。 (v2.4.0)
-- 10/29/2024 スカラ量子化がグラフやQBGのデータタイプとして利用可能になりました。(v2.3.0)
+- 2026/10/26 NGTがLlamaIndexのベクトルストアとして利用できるようになり、[PyPI](https://pypi.org/project/llama-index-vector-stores-ngt/)からインストールできるようになりました。
+- 2025/05/26 直積量子化がグラフのデータタイプとして利用可能になりました。 (v2.4.0)
+- 2024/10/29 スカラ量子化がグラフやQBGのデータタイプとして利用可能になりました。(v2.3.0)
 - 2024/04/10 内積が利用可能になりました。(v2.1.0)
 - 2022/08/10 QBG(Quantized Blob Graph)およびQG(NGTQGの改良版)が利用可能となりました。ngtqおよびngtqgは[qbg](https://github.com/NGT-labs/NGT/blob/main/bin/qbg/README.md)で置き換えられました。
 - 2022/02/04 FP16(半精度浮動小数点)が利用可能になりました。(v1.14.0)
@@ -92,6 +93,22 @@ Supported by <a href="https://www.sakura.ad.jp/corporate/"><img src="./assets/3-
       $ cmake ..
       $ make
       $ make install
+
+#### Windows（Cygwin）（[Naimur](https://github.com/NaimurRahmannn)さんに感謝します）
+
+現在、Windows対応は MinGW-w64 GCC（MSYS2 / UCRT64 経由）を対象としています。Microsoft Visual C++（MSVC）には現在対応しておらず、将来対応する予定です。-DNGT_QBG_DISABLED=ON の指定が必要です。標準的なインメモリインデックスの作成および検索が利用できます。現在のWindowsビルドではCLIは静的リンクを使用しており、DLLエクスポート指定および共有メモリ（メモリマップトファイル）アロケータにはまだ対応していません。
+
+MSYS2（UCRT64環境）を使用してビルド環境をセットアップし、ビルドするには次のようにします。
+
+      $ pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-libgomp mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
+      $ cd NGT
+      $ mkdir build
+      $ cd build
+      $ cmake -DNGT_QBG_DISABLED=ON -G Ninja ..
+      $ ninja -j 2
+      
+> [!NOTE]
+> Link-Time Optimization（LTO）およびテンプレートのインスタンス化を伴うコンパイルは、多くのメモリを消費します。16 GB未満のRAMを搭載したマシンでは、ninja -j 2 を使用するなどして並列ジョブ数を制限することで、コンパイラのメモリ不足エラーを回避できます。
 
 ### ビルド済み
 
