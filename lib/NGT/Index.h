@@ -25,6 +25,7 @@
 #include <iomanip>
 #include <unordered_set>
 #include <thread>
+#include <random>
 
 #ifndef _WIN32
 #include <sys/time.h>
@@ -41,6 +42,17 @@
 #include "NGT/Graph.h"
 
 namespace NGT {
+// The random draws of the seed selection use an engine of their own instead of rand() and srand(): those share one
+// process-wide state behind a lock (glibc), which serializes concurrent searches, and a srand() in one thread changes the
+// draws of every other thread.
+inline std::minstd_rand &threadRandomEngine() {
+  static thread_local std::minstd_rand engine(std::random_device{}());
+  return engine;
+}
+// a uniform value in (0, 1), as ((double)rand() + 1.0) / ((double)RAND_MAX + 2.0)
+inline double uniformOpen(std::minstd_rand &engine) {
+  return ((double)(engine() - engine.min()) + 1.0) / ((double)(engine.max() - engine.min()) + 2.0);
+}
 
 class Property;
 
@@ -1308,12 +1320,13 @@ class GraphIndex : public Index, public NeighborhoodGraph {
     std::vector<ObjectID> deteted;
     size_t emptyCount = 0;
 #ifndef NGT_ENABLE_TIME_SEED_FOR_RANDOM
-    if (seeds.size() != 0) {
-      srand(seeds[0].id);
-    }
+    std::minstd_rand seededEngine(seeds.size() != 0 ? seeds[0].id : 1);
+    std::minstd_rand &engine = seeds.size() != 0 ? seededEngine : threadRandomEngine();
+#else
+    std::minstd_rand &engine = threadRandomEngine();
 #endif
     while (seedSize > seeds.size()) {
-      double random = ((double)rand() + 1.0) / ((double)RAND_MAX + 2.0);
+      double random = uniformOpen(engine);
       size_t idx    = floor(repositorySize * random) + 1;
       if (repo.isEmpty(idx)) {
         emptyCount++;
@@ -2217,11 +2230,13 @@ class GraphAndTreeIndex : public GraphIndex, public DVPTree {
       seedSize = seedSize > size ? size : seedSize;
       if (seeds.size() > seedSize) {
 #ifndef NGT_ENABLE_TIME_SEED_FOR_RANDOM
-        srand(seeds[0].id);
+        std::minstd_rand engine(seeds[0].id);
+#else
+        std::minstd_rand &engine = threadRandomEngine();
 #endif
         // to accelerate thinning data.
         for (size_t i = seeds.size(); i > seedSize; i--) {
-          double random = ((double)rand() + 1.0) / ((double)RAND_MAX + 2.0);
+          double random = uniformOpen(engine);
           size_t idx    = floor(i * random);
           seeds[idx]    = seeds[i - 1];
         }
@@ -2241,9 +2256,10 @@ class GraphAndTreeIndex : public GraphIndex, public DVPTree {
       size_t seedSize =
           NeighborhoodGraph::property.seedSize == 0 ? size : NeighborhoodGraph::property.seedSize;
       if (seeds.size() > seedSize) {
+        std::minstd_rand &engine = threadRandomEngine();
         // to accelerate thinning data.
         for (size_t i = seeds.size(); i > seedSize; i--) {
-          double random = ((double)rand() + 1.0) / ((double)RAND_MAX + 2.0);
+          double random = uniformOpen(engine);
           size_t idx    = floor(i * random);
           seeds[idx]    = seeds[i - 1];
         }
