@@ -76,6 +76,7 @@ class GraphOptimizer {
     prefetchParameterOptimization   = true;
     accuracyTableGeneration         = true;
     shortcutReductionWithLessMemory = false;
+    shortcutReductionRange          = -1.0; // unset: execute() takes the default of `ngt reconstruct-graph`
     undirectedGraphConversion       = false;
     numOfThreads                    = 0;
   }
@@ -345,6 +346,14 @@ class GraphOptimizer {
         try {
           NGT::Timer timer;
           timer.start();
+          if (shortcutReductionRange < 0.0) {
+            // not set by the caller (the Python binding's Optimizer): the defaults of `ngt reconstruct-graph`
+#ifdef NGT_SHORTCUT_REDUCTION_WITH_ANGLE
+            shortcutReductionRange = shortcutReductionWithLessMemory ? 0.38 : 1.0;
+#else
+            shortcutReductionRange = shortcutReductionWithLessMemory ? 18.0 : 1.0;
+#endif
+          }
           if (shortcutReductionWithLessMemory) {
             NGT::GraphReconstructor::removeShortcutEdges(*graphIndex, outIndexPath, shortcutReductionRange,
                                                          numOfThreads, minNumOfEdges);
