@@ -16,6 +16,7 @@
 //
 
 #include <algorithm>
+#include <memory>
 #include <string>
 #include <iostream>
 #include <sstream>
@@ -110,7 +111,7 @@ NGTIndex ngt_create_graph_and_tree_in_memory(NGTProperty prop, NGTError error) {
 
 NGTGraphStatistics ngt_get_graph_statistics(const NGTIndex index, char mode, size_t edgeSize,
                                             NGTError error) {
-  NGTGraphStatistics cStats;
+  NGTGraphStatistics cStats{};
   if (index == NULL) {
     std::stringstream ss;
     ss << "Capi : " << __FUNCTION__ << "() : parametor error: index = " << index;
@@ -153,26 +154,29 @@ NGTGraphStatistics ngt_get_graph_statistics(const NGTIndex index, char mode, siz
     cStats.c1Indegree                       = stats.getC1Indegree();
 
     cStats.indegreeCountSize = stats.getIndegreeCount().size();
-    cStats.indegreeCount     = new int64_t[cStats.indegreeCountSize];
-    std::memcpy(cStats.indegreeCount, stats.getIndegreeCount().data(),
+    std::unique_ptr<int64_t[]> indegreeCount(new int64_t[cStats.indegreeCountSize]);
+    std::memcpy(indegreeCount.get(), stats.getIndegreeCount().data(),
                 cStats.indegreeCountSize * sizeof(size_t));
 
     cStats.outdegreeHistogramSize = stats.getOutdegreeHistogram().size();
-    cStats.outdegreeHistogram     = new size_t[cStats.outdegreeHistogramSize];
-    std::memcpy(cStats.outdegreeHistogram, stats.getOutdegreeHistogram().data(),
+    std::unique_ptr<size_t[]> outdegreeHistogram(new size_t[cStats.outdegreeHistogramSize]);
+    std::memcpy(outdegreeHistogram.get(), stats.getOutdegreeHistogram().data(),
                 cStats.outdegreeHistogramSize * sizeof(size_t));
 
     cStats.indegreeHistogramSize = stats.getIndegreeHistogram().size();
-    cStats.indegreeHistogram     = new size_t[cStats.indegreeHistogramSize];
-    std::memcpy(cStats.indegreeHistogram, stats.getIndegreeHistogram().data(),
+    std::unique_ptr<size_t[]> indegreeHistogram(new size_t[cStats.indegreeHistogramSize]);
+    std::memcpy(indegreeHistogram.get(), stats.getIndegreeHistogram().data(),
                 cStats.indegreeHistogramSize * sizeof(size_t));
 
-    cStats.valid = stats.isValid();
+    cStats.valid              = stats.isValid();
+    cStats.indegreeCount      = indegreeCount.release();
+    cStats.outdegreeHistogram = outdegreeHistogram.release();
+    cStats.indegreeHistogram  = indegreeHistogram.release();
   } catch (std::exception &err) {
     std::stringstream ss;
     ss << "Capi : " << __FUNCTION__ << "() : Error: " << err.what();
     operate_error_string_(ss, error);
-    return cStats;
+    return NGTGraphStatistics{};
   }
 
   return cStats;
@@ -444,8 +448,12 @@ bool ngt_set_property_distance_type_inner_product(NGTProperty prop, NGTError err
 
 NGTPropertyInfo ngt_get_property_info(NGTIndex index, NGTError error) {
   NGT::Property prop;
+  const char *accuracyTable = nullptr;
   try {
-    static_cast<NGT::Index *>(index)->getProperty(prop);
+    auto *pindex = static_cast<NGT::Index *>(index);
+    pindex->getProperty(prop);
+    auto &graph   = static_cast<NGT::GraphIndex &>(pindex->getIndex());
+    accuracyTable = graph.getGraphIndexProperty().accuracyTable.c_str();
   } catch (std::exception &err) {
     std::stringstream ss;
     ss << "Capi : " << __FUNCTION__ << "() : Error: " << err.what();
@@ -472,8 +480,8 @@ NGTPropertyInfo ngt_get_property_info(NGTIndex index, NGTError error) {
 #endif
                           prop.prefetchOffset,
                           prop.prefetchSize,
-                          prop.accuracyTable.c_str(),
-                          prop.searchType.c_str(),
+                          accuracyTable,
+                          "",
                           prop.maxMagnitude,
                           prop.nOfNeighborsForInsertionOrder,
                           prop.epsilonForInsertionOrder,

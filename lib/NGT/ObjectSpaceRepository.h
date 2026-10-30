@@ -1046,9 +1046,9 @@ class ObjectSpaceRepository : public ObjectSpace, public ObjectRepository {
     float maxMag          = 0.0;
     ObjectRepository &rep = *this;
 #ifndef _OPENMP
-    auto nOfThreads       = 1;
+    auto nOfThreads = 1;
 #else
-    auto nOfThreads       = omp_get_max_threads();
+    auto nOfThreads = omp_get_max_threads();
 #endif
     std::vector<float> maxm(nOfThreads, 0.0);
 #pragma omp parallel for

@@ -39,6 +39,7 @@
 #include <typeinfo>
 #include <type_traits>
 #include <limits>
+#include <random>
 
 #ifndef _WIN32
 #include <execinfo.h>
@@ -92,6 +93,18 @@ inline void alignedFree64(void *ptr) {
 #else
   free(ptr);
 #endif
+}
+
+// The random draws of the seed selection use an engine of their own instead of rand() and srand(): those share one
+// process-wide state behind a lock (glibc), which serializes concurrent searches, and a srand() in one thread changes the
+// draws of every other thread.
+inline std::minstd_rand &threadRandomEngine() {
+  static thread_local std::minstd_rand engine(std::random_device{}());
+  return engine;
+}
+// a uniform value in (0, 1), as ((double)rand() + 1.0) / ((double)RAND_MAX + 2.0)
+inline double uniformOpen(std::minstd_rand &engine) {
+  return ((double)(engine() - engine.min()) + 1.0) / ((double)(engine.max() - engine.min()) + 2.0);
 }
 
 class quint8 {
@@ -770,8 +783,8 @@ class CpuInfo {
 class StdOstreamRedirector {
  public:
 #ifdef _WIN32
-  StdOstreamRedirector(bool e = false, const std::string path = "/dev/null",
-                       unsigned int m = 0644, int f = 2) {
+  StdOstreamRedirector(bool e = false, const std::string path = "/dev/null", unsigned int m = 0644,
+                       int f = 2) {
 #else
   StdOstreamRedirector(bool e = false, const std::string path = "/dev/null",
                        mode_t m = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH, int f = 2) {
