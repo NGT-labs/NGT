@@ -875,9 +875,9 @@ class GraphReconstructor {
     }
     std::sort(reverseSize.begin(), reverseSize.end());
 
-    std::vector<uint32_t> indegreeCount(graph.size(), 0);
+    std::vector<uint32_t> indegreeCount(graph.size() + 1, 0);
     size_t zeroCount = 0;
-    for (size_t sizerank = 0; sizerank <= reverseSize.size(); sizerank++) {
+    for (size_t sizerank = 0; sizerank < reverseSize.size(); sizerank++) {
 
       if (reverseSize[sizerank].first == 0) {
         zeroCount++;

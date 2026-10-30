@@ -42,17 +42,6 @@
 #include "NGT/Graph.h"
 
 namespace NGT {
-// The random draws of the seed selection use an engine of their own instead of rand() and srand(): those share one
-// process-wide state behind a lock (glibc), which serializes concurrent searches, and a srand() in one thread changes the
-// draws of every other thread.
-inline std::minstd_rand &threadRandomEngine() {
-  static thread_local std::minstd_rand engine(std::random_device{}());
-  return engine;
-}
-// a uniform value in (0, 1), as ((double)rand() + 1.0) / ((double)RAND_MAX + 2.0)
-inline double uniformOpen(std::minstd_rand &engine) {
-  return ((double)(engine() - engine.min()) + 1.0) / ((double)(engine.max() - engine.min()) + 2.0);
-}
 
 class Property;
 
@@ -406,7 +395,7 @@ class Index {
     int prefetchOffset;
     int prefetchSize;
     std::string accuracyTable;
-    std::string searchType; // test
+    std::string searchType;
     float maxMagnitude;
     float quantizationScale;
     float quantizationOffset;

@@ -167,6 +167,7 @@ NGTIndex ngt_create_graph_and_tree(const char *, NGTProperty, NGTError);
 
 NGTIndex ngt_create_graph_and_tree_in_memory(NGTProperty, NGTError);
 
+// On failure, returns zero-initialized statistics that can be passed to ngt_free_graph_statistics.
 NGTGraphStatistics ngt_get_graph_statistics(const NGTIndex index, char mode, size_t edgeSize, NGTError error);
 
 void ngt_free_graph_statistics(NGTGraphStatistics *cStats);

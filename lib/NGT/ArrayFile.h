@@ -24,6 +24,7 @@
 #include <stdexcept>
 #include <cerrno>
 #include <cstring>
+#include <pthread.h>
 
 namespace NGT {
 class ObjectSpace;
@@ -100,6 +101,9 @@ template <class TYPE> bool ArrayFile<TYPE>::open(const std::string &file) {
   _isOpen = true;
 
   bool ret = _readFileHead();
+  if (!ret) {
+    close();
+  }
   return ret;
 }
 
@@ -140,10 +144,17 @@ template <class TYPE> void ArrayFile<TYPE>::put(const size_t id, TYPE &data, NGT
 }
 
 template <class TYPE> bool ArrayFile<TYPE>::get(const size_t id, TYPE &data, NGT::ObjectSpace *objectSpace) {
-  pthread_mutex_lock(&_mutex);
+  struct MutexGuard {
+    pthread_mutex_t &mutex;
+    explicit MutexGuard(pthread_mutex_t &mutex) : mutex(mutex) {
+      if (pthread_mutex_lock(&mutex) != 0) {
+        throw std::runtime_error("ArrayFile::get: Cannot lock mutex");
+      }
+    }
+    ~MutexGuard() { pthread_mutex_unlock(&mutex); }
+  } guard(_mutex);
 
   if (size() <= id) {
-    pthread_mutex_unlock(&_mutex);
     return false;
   }
 
@@ -169,11 +180,11 @@ template <class TYPE> bool ArrayFile<TYPE>::get(const size_t id, TYPE &data, NGT
       }
     }
     if (_stream.fail()) {
+      _stream.clear();
       throw std::runtime_error("ArrayFile::get: Error!");
     }
   }
 
-  pthread_mutex_unlock(&_mutex);
   return true;
 }
 
@@ -196,10 +207,11 @@ template <class TYPE> size_t ArrayFile<TYPE>::size() {
 }
 
 template <class TYPE> bool ArrayFile<TYPE>::_readFileHead() {
-  _stream.seekp(0, std::ios::beg);
-  _stream.read((char *)(&_fileHead), sizeof(FileHeadStruct));
-  if (_stream.bad()) {
+  FileHeadStruct fileHead{};
+  _stream.seekg(0, std::ios::beg);
+  if (!_stream.read(reinterpret_cast<char *>(&fileHead), sizeof(fileHead))) {
     return false;
   }
+  _fileHead = fileHead;
   return true;
 }
