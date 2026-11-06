@@ -24,6 +24,10 @@
 #include "NGT/NGTQ/ObjectFile.h"
 #include "NGT/HashBasedBooleanSet.h"
 
+#if defined(__aarch64__) && defined(NGT_NEON)
+#include <arm_neon.h>
+#endif
+
 #if defined(NGT_SHARED_MEMORY_ALLOCATOR) || defined(NGT_QBG_DISABLED)
 #undef NGTQ_QBG
 #else
@@ -3061,12 +3065,16 @@ template <typename T> class QuantizedObjectDistanceFloat : public QuantizedObjec
     size_t numOfAlignedSubvectors = ((localDivisionNo - 1) / NGTQ_BATCH_SIZE + 1) * NGTQ_BATCH_SIZE;
     size_t alignedSize            = ((size - 1) / 2 + 1) * 2;
     uint16_t d[NGTQ_SIMD_BLOCK_SIZE];
-    size_t didx                                    = 0;
-    size_t byteSize                                = numOfAlignedSubvectors * alignedSize / 2;
-    auto *last                                     = localID + byteSize;
+    size_t didx     = 0;
+    size_t byteSize = numOfAlignedSubvectors * alignedSize / 2;
+    auto *last      = localID + byteSize;
+#ifdef NGT_REVISED_QUANTIZED_DISTANCE
     static const size_t perm[NGTQ_SIMD_BLOCK_SIZE] = {0,  8,  16, 24, 1,  9,  17, 25, 2,  10, 18,
                                                       26, 3,  11, 19, 27, 4,  12, 20, 28, 5,  13,
                                                       21, 29, 6,  14, 22, 30, 7,  15, 23, 31};
+#else
+    static const size_t perm[NGTQ_SIMD_BLOCK_SIZE] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+#endif
     while (localID < last) {
       uint8_t *lut = distanceLUT.localDistanceLookup;
       memset(d, 0, sizeof(uint16_t) * NGTQ_SIMD_BLOCK_SIZE);
@@ -3117,7 +3125,8 @@ template <typename T> class QuantizedObjectDistanceFloat : public QuantizedObjec
         lut += localCodebookCentroidNo - 1;
       }
       for (size_t i = 0; i < NGTQ_SIMD_BLOCK_SIZE; i++) {
-        distances[didx + i] = static_cast<uint16_t>(sqrt(static_cast<float>(d[i] + distanceLUT.totalOffset)));
+        distances[didx + perm[i]] =
+            static_cast<uint16_t>(sqrt(static_cast<float>(d[i] + distanceLUT.totalOffset)));
       }
       didx += NGTQ_SIMD_BLOCK_SIZE;
     }
@@ -3148,12 +3157,82 @@ template <typename T> class QuantizedObjectDistanceFloat : public QuantizedObjec
 #ifdef NGTQBG_MIN
     float min = std::numeric_limits<float>::max();
 #endif
+#ifdef NGT_REVISED_QUANTIZED_DISTANCE
+    static const size_t perm[NGTQ_SIMD_BLOCK_SIZE] = {0,  8,  16, 24, 1,  9,  17, 25, 2,  10, 18,
+                                                      26, 3,  11, 19, 27, 4,  12, 20, 28, 5,  13,
+                                                      21, 29, 6,  14, 22, 30, 7,  15, 23, 31};
+#else
+    static const size_t perm[NGTQ_SIMD_BLOCK_SIZE] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+#endif
     size_t numOfAlignedSubvectors = ((localDivisionNo - 1) / NGTQ_BATCH_SIZE + 1) * NGTQ_BATCH_SIZE;
     size_t alignedSize            = ((size - 1) / 2 + 1) * 2;
+    size_t didx                   = 0;
+    size_t byteSize               = numOfAlignedSubvectors * alignedSize / 2;
+    auto *last                    = localID + byteSize;
+#if defined(__aarch64__) && defined(NGT_NEON)
+#ifndef NGT_REVISED_QUANTIZED_DISTANCE
+    NGTThrowException("ARM NEON approximate distance is supported only for the revised 32-node layout.");
+#else
+    const float scale           = distanceLUT.scales[0];
+    const float totalOffset     = distanceLUT.totalOffset;
+    const float32x4_t vscale    = vdupq_n_f32(scale);
+    const float32x4_t voffset   = vdupq_n_f32(totalOffset);
+    const uint8x16_t nibbleMask = vdupq_n_u8(0x0F);
+    while (localID < last) {
+      uint8_t *lut  = distanceLUT.localDistanceLookup;
+      uint32x4_t a0 = vdupq_n_u32(0);
+      uint32x4_t a1 = vdupq_n_u32(0);
+      uint32x4_t a2 = vdupq_n_u32(0);
+      uint32x4_t a3 = vdupq_n_u32(0);
+      uint32x4_t a4 = vdupq_n_u32(0);
+      uint32x4_t a5 = vdupq_n_u32(0);
+      uint32x4_t a6 = vdupq_n_u32(0);
+      uint32x4_t a7 = vdupq_n_u32(0);
+      for (size_t li = 0; li < numOfAlignedSubvectors; li++) {
+        uint8x16_t lutv     = vld1q_u8(lut);
+        uint8x16_t packed   = vld1q_u8(localID);
+        uint8x16_t lo       = vandq_u8(packed, nibbleMask);
+        uint8x16_t hi       = vandq_u8(vshrq_n_u8(packed, 4), nibbleMask);
+        uint8x16_t dlo      = vqtbl1q_u8(lutv, lo);
+        uint8x16_t dhi      = vqtbl1q_u8(lutv, hi);
+        uint8x16x2_t zipped = vzipq_u8(dlo, dhi);
+        uint16x8_t w0       = vmovl_u8(vget_low_u8(zipped.val[0]));
+        uint16x8_t w1       = vmovl_high_u8(zipped.val[0]);
+        uint16x8_t w2       = vmovl_u8(vget_low_u8(zipped.val[1]));
+        uint16x8_t w3       = vmovl_high_u8(zipped.val[1]);
+        a0                  = vaddq_u32(a0, vmovl_u16(vget_low_u16(w0)));
+        a1                  = vaddq_u32(a1, vmovl_high_u16(w0));
+        a2                  = vaddq_u32(a2, vmovl_u16(vget_low_u16(w1)));
+        a3                  = vaddq_u32(a3, vmovl_high_u16(w1));
+        a4                  = vaddq_u32(a4, vmovl_u16(vget_low_u16(w2)));
+        a5                  = vaddq_u32(a5, vmovl_high_u16(w2));
+        a6                  = vaddq_u32(a6, vmovl_u16(vget_low_u16(w3)));
+        a7                  = vaddq_u32(a7, vmovl_high_u16(w3));
+        lut += localCodebookCentroidNo - 1;
+        localID += 16;
+      }
+      float tmp[NGTQ_SIMD_BLOCK_SIZE];
+      vst1q_f32(tmp + 0, vsqrtq_f32(vaddq_f32(vmulq_f32(vcvtq_f32_u32(a0), vscale), voffset)));
+      vst1q_f32(tmp + 4, vsqrtq_f32(vaddq_f32(vmulq_f32(vcvtq_f32_u32(a1), vscale), voffset)));
+      vst1q_f32(tmp + 8, vsqrtq_f32(vaddq_f32(vmulq_f32(vcvtq_f32_u32(a2), vscale), voffset)));
+      vst1q_f32(tmp + 12, vsqrtq_f32(vaddq_f32(vmulq_f32(vcvtq_f32_u32(a3), vscale), voffset)));
+      vst1q_f32(tmp + 16, vsqrtq_f32(vaddq_f32(vmulq_f32(vcvtq_f32_u32(a4), vscale), voffset)));
+      vst1q_f32(tmp + 20, vsqrtq_f32(vaddq_f32(vmulq_f32(vcvtq_f32_u32(a5), vscale), voffset)));
+      vst1q_f32(tmp + 24, vsqrtq_f32(vaddq_f32(vmulq_f32(vcvtq_f32_u32(a6), vscale), voffset)));
+      vst1q_f32(tmp + 28, vsqrtq_f32(vaddq_f32(vmulq_f32(vcvtq_f32_u32(a7), vscale), voffset)));
+      for (size_t i = 0; i < NGTQ_SIMD_BLOCK_SIZE; i++) {
+        distances[didx + perm[i]] = tmp[i];
+      }
+#ifdef NGTQBG_MIN
+      for (size_t i = 0; i < NGTQ_SIMD_BLOCK_SIZE; i++) {
+        if (min > tmp[i]) min = tmp[i];
+      }
+#endif
+      didx += NGTQ_SIMD_BLOCK_SIZE;
+    }
+#endif
+#else
     uint32_t d[NGTQ_SIMD_BLOCK_SIZE];
-    size_t didx     = 0;
-    size_t byteSize = numOfAlignedSubvectors * alignedSize / 2;
-    auto *last      = localID + byteSize;
     while (localID < last) {
       uint8_t *lut = distanceLUT.localDistanceLookup;
       memset(d, 0, sizeof(uint32_t) * NGTQ_SIMD_BLOCK_SIZE);
@@ -3171,16 +3250,17 @@ template <typename T> class QuantizedObjectDistanceFloat : public QuantizedObjec
         lut += localCodebookCentroidNo - 1;
       }
       for (size_t i = 0; i < NGTQ_SIMD_BLOCK_SIZE; i++) {
-        distances[didx + i] =
+        distances[didx + perm[i]] =
             sqrt(static_cast<float>(d[i]) * distanceLUT.scales[0] + distanceLUT.totalOffset);
 #ifdef NGTQBG_MIN
-        if (min > distances[didx + i]) {
-          min = distances[didx + i];
+        if (min > distances[didx + perm[i]]) {
+          min = distances[didx + perm[i]];
         }
 #endif
       }
       didx += NGTQ_SIMD_BLOCK_SIZE;
     }
+#endif
 #ifdef NGTQBG_MIN
     return min;
 #endif
