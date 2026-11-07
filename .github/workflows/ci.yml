@@ -49,6 +49,16 @@ jobs:
 
     - run: install/bin/ngt -d 128 -o c create index data/sift-dataset-5k.tsv
 
+    - name: Build and test Python bindings
+      env:
+        NGT_STATIC_LIBRARY_PATH: ${{ github.workspace }}/build/lib/NGT/libngt.a
+        NGT_INCLUDE_DIR: ${{ github.workspace }}/install/include
+      run: |
+        python3 -m venv build/python-venv
+        # Match the native target used by the library build.
+        build/python-venv/bin/python -m pip install ./python --config-settings=--build-option=--static-library-native
+        build/python-venv/bin/python -m unittest discover -s python/tests -v
+
   linux-core-openmp-disabled:
     runs-on: ubuntu-latest
     steps:
