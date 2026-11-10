@@ -103,6 +103,7 @@ jobs:
     - name: Configure CMake
       run: >-
         cmake -S . -B build-windows -G Ninja
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5
         -DNGT_QBG_DISABLED=ON
         -DNGT_OPENMP_DISABLED=${{ matrix.openmp_disabled }}
         -DNGT_BFLOAT_DISABLED=ON
