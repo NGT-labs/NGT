@@ -2,3 +2,4 @@ build/
 python/VERSION
 python/dist/
 python/ngt.egg-info/
+__pycache__/
