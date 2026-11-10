@@ -15,6 +15,17 @@ pip3 install .
 ```
 Please note that the search speed of the ngtpy packages from PyPI is slower than that of the ngtpy that is built on your computer so that the package can be run on older CPUs.  
 
+Building with `setup.py` directly or without build isolation requires pybind11 2.12.0 or newer.
+This version prevents a deadlock when multiple threads first convert a search query to a NumPy array.
+
+## Tests
+
+After installing the Python binding, run the tests from the repository root:
+
+```
+python3 -m unittest discover -s python/tests -v
+```
+
 ## Documents
 
 [ngtpy (pybind11) reference](README-ngtpy.md)

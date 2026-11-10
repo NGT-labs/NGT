@@ -8,6 +8,9 @@ import setuptools
 import pybind11
 import platform
 
+if pybind11.version_info < (2, 12, 0):
+    raise RuntimeError("pybind11 >= 2.12.0 is required to build ngtpy")
+
 static_library_option = '--static-library'
 static_library_native_option = '--static-library-native'
 static_library_avx2_option = '--static-library-avx2'
