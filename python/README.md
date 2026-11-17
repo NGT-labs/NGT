@@ -20,11 +20,15 @@ This version prevents a deadlock when multiple threads first convert a search qu
 
 ## Tests
 
-After installing the Python binding, run the tests from the repository root:
+After installing the Python binding, run the self-contained threaded-search regression test from the repository root:
 
 ```
-python3 -m unittest discover -s python/tests -v
+python3 -m unittest discover -s python/tests -p 'test_threaded_search.py' -v
+python3 -m unittest discover -s python/tests -p 'test_ngtpy.py' -v
 ```
+
+CI runs these self-contained tests explicitly. Other legacy scripts in `python/tests/`
+may require the ctypes binding or prebuilt QBG indexes and are not included.
 
 ## Documents
 
@@ -60,4 +64,3 @@ ngtpy(pybind11) can reduce the processing times than ngt(ctypes). It is more eff
 ```
 
 See also [sample.py](sample/sample.py).
-

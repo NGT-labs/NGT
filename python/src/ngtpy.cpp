@@ -494,34 +494,44 @@ public:
     std::vector<float> object;
     object.reserve(prop.dimension);
     switch (prop.objectType) {
-    case NGT::ObjectSpace::ObjectType::Uint8:
-      {
-	auto *obj = static_cast<uint8_t*>(NGT::Index::getObjectSpace().getObject(id));
-	for (int i = 0; i < prop.dimension; i++) {
-	  object.push_back(*obj++);
-	}
-	break;
+    case NGT::ObjectSpace::ObjectType::Uint8: {
+      auto *obj = static_cast<uint8_t *>(NGT::Index::getObjectSpace().getObject(id));
+      for (int i = 0; i < prop.dimension; i++) {
+        object.push_back(*obj++);
       }
-    default:
-    case NGT::ObjectSpace::ObjectType::Float:
-      {
-	auto *obj = static_cast<float*>(NGT::Index::getObjectSpace().getObject(id));
-	for (int i = 0; i < prop.dimension; i++) {
-	  object.push_back(*obj++);
-	}
-	break;
+      break;
+    }
+#ifdef NGT_HALF_FLOAT
+    case NGT::ObjectSpace::ObjectType::Float16: {
+      auto *obj = static_cast<NGT::float16 *>(NGT::Index::getObjectSpace().getObject(id));
+      for (size_t i = 0; i < prop.dimension; i++) {
+        object.push_back(static_cast<float>(obj[i]));
       }
+      break;
+    }
+#endif
+    case NGT::ObjectSpace::ObjectType::Float: {
+      auto *obj = static_cast<float *>(NGT::Index::getObjectSpace().getObject(id));
+      for (size_t i = 0; i < prop.dimension; i++) {
+        object.push_back(obj[i]);
+      }
+      break;
+    }
+    default: {
+      std::stringstream msg;
+      msg << "ngtpy::get_object: unsupported object type. " << prop.objectType;
+      NGTThrowException(msg);
+    }
     }
     return object;
   }
 
-  void set(
-   size_t numOfSearchObjects, 		// the number of resultant objects
-   NGT::Distance radius,		// search radius.
-   float epsilon,	 		// search parameter epsilon. the adequate range is from 0.0 to 0.05.
-   int edgeSize,			// the number of edges for each node
-   float expectedAccuracy,		// Expected accuracy
-   float resultExpansion		// the number of inner resultant objects
+  void set(size_t numOfSearchObjects, // the number of resultant objects
+           NGT::Distance radius,      // search radius.
+           float epsilon,             // search parameter epsilon. the adequate range is from 0.0 to 0.05.
+           int edgeSize,              // the number of edges for each node
+           float expectedAccuracy,    // Expected accuracy
+           float resultExpansion      // the number of inner resultant objects
   ) {
     defaultNumOfSearchObjects = numOfSearchObjects > 0 ? numOfSearchObjects : defaultNumOfSearchObjects;
     defaultEpsilon	      = epsilon > -1.0 ? epsilon : defaultEpsilon;
