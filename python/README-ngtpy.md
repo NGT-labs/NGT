@@ -37,7 +37,7 @@ Close the index.
 None.
 
 ### insert
-Insert the specified object into the index. Not build the index for the object. The function build_index below should be called to build the index after inserting objects by using this function.
+Insert the specified object into the index. This function does not build the search graph for the object. Call `build_index` after inserting objects. `build_index` builds only objects that do not yet have graph nodes.
 
       int insert(self: ngtpy.Index, object: numpy.ndarray[float64])
 
@@ -48,18 +48,20 @@ ID for the inserted object.
 Specify the inserted object.
 
 ### build_index
-Build the index for the objects that have been inserted by using the function insert.
+Build the search graph for objects that have been inserted with `insert` and do not yet have graph nodes. Objects that already have graph nodes are skipped. Internally the object list is scanned to find unbuilt objects, but existing graph nodes are not rebuilt from scratch.
+
+The graph search (`search`) cannot return newly inserted objects until they have been built. `linear_search` scans all registered objects, including objects that have not been built yet.
 
       build_index(self: ngtpy.Index, num_threads: int=8)
 
 **Returns**   
 None.
 
-**num_thread**  
-Specify the number of threads to build the index.
+**num_threads**  
+Specify the number of threads used to build the index.
 
 ### batch_insert
-Insert the specified objects and builds the index for the objects. This function is almost the same as executing the ngt command "ngt append". You may execute the ngt command instead of calling this function.
+Insert the specified objects and build the index for the objects. This function is almost the same as executing the ngt command "ngt append". You may execute the ngt command instead of calling this function. The index is built only when `build=True` (the default).
 
       batch_insert(self: ngtpy.Index, objects: numpy.ndarray[float64], num_threads: int=8)
 
