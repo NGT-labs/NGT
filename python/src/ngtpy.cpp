@@ -430,13 +430,24 @@ public:
   }
 
   void batchSearch(
-    py::array_t<float> queries,
+    py::array_t<float, py::array::c_style | py::array::forcecast> queries,
     BatchResults &results,
     size_t size,
     bool withDistance = true
   ) {
+    if (queries.ndim() != 2) {
+      NGTThrowException("ngtpy::batchSearch: queries must be a two-dimensional array.");
+    }
     const py::buffer_info &qinfo = queries.request();
     const std::vector<long int> &qshape = qinfo.shape;
+    NGT::Property prop;
+    getProperty(prop);
+    if (prop.dimension != qshape[1]) {
+      std::stringstream msg;
+      msg << "ngtpy::batchSearch: query dimension does not match the index. "
+          << qshape[1] << ":" << prop.dimension;
+      NGTThrowException(msg);
+    }
     auto nOfQueries = qshape[0];
     size_t dimension = qshape[1];
     auto *queryPtr = static_cast<float*>(qinfo.ptr);
