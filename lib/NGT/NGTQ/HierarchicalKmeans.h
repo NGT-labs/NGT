@@ -17,6 +17,7 @@
 #pragma once
 
 #include "Quantizer.h"
+#include "NGT/FileSystem.h"
 #include "NGT/GraphOptimizer.h"
 
 namespace QBG {
@@ -1128,10 +1129,7 @@ class HierarchicalKmeans {
     {
       NGT::Timer timer;
       timer.start();
-      const char *ngtDirString = "/tmp/ngt-XXXXXX";
-      char ngtDir[strlen(ngtDirString) + 1];
-      strcpy(ngtDir, ngtDirString);
-      tmpDir           = mkdtemp(ngtDir);
+      tmpDir           = NGT::FileSystem::createTemporaryDirectory();
       std::string anng = tmpDir + "/anng";
       onng             = tmpDir + "/onng";
 #ifndef NGT_SHARED_MEMORY_ALLOCATOR
@@ -1155,9 +1153,10 @@ class HierarchicalKmeans {
     NGT::Index onngIndex(onng);
 #endif
     NGT::Index &index = onngIndex;
-    const string com  = "rm -rf " + tmpDir;
-    if (system(com.c_str()) == -1) {
-      std::cerr << "Warning. remove is failed. " << com << std::endl;
+    try {
+      NGT::FileSystem::removeAll(tmpDir);
+    } catch (NGT::Exception &err) {
+      std::cerr << "Warning. remove is failed. " << err.what() << std::endl;
     }
 #else
     NGT::Index &index = anngIndex;

@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include "FileSystem.h"
 #include "GraphReconstructor.h"
 #include "Optimizer.h"
 
@@ -274,11 +275,11 @@ class GraphOptimizer {
       NGTThrowException(msg);
     }
 
-    const std::string com = "cp -r " + inIndexPath + " " + outIndexPath;
-    int stat              = system(com.c_str());
-    if (stat != 0) {
+    try {
+      NGT::FileSystem::copyDirectory(inIndexPath, outIndexPath);
+    } catch (NGT::Exception &err) {
       std::stringstream msg;
-      msg << "Optimizer::execute: Cannot create the specified index. " << outIndexPath;
+      msg << "Optimizer::execute: Cannot create the specified index. " << outIndexPath << " " << err.what();
       NGTThrowException(msg);
     }
 
