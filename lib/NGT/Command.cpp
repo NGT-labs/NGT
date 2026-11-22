@@ -454,7 +454,7 @@ void appendTextVectorsInMemory(std::string &indexPath, std::string &data, size_t
     size_t counter = 0;
     std::vector<float> objects;
     while (getline(is, line)) {
-      if (is.eof()) break;
+      if (dataSize > 0 && counter >= dataSize) break;
       vector<string> tokens;
       NGT::Common::tokenize(line, tokens, "\t, ");
       for (auto &v : tokens)

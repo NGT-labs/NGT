@@ -49,6 +49,29 @@ jobs:
 
     - run: install/bin/ngt -d 128 -o c create index data/sift-dataset-5k.tsv
 
+    - name: Check the number of appended objects
+      run: |
+        set -euo pipefail
+        ngt=install/bin/ngt
+        dir=build/append-test
+        mkdir -p $dir
+        seq 1 10 | awk '{print $1, 0, 0, 0}' > $dir/ten.tsv
+        printf '1 0 0 0\n2 0 0 0\n3 0 0 0' > $dir/no-newline.tsv
+        # check <index> <create flags> <append flags> <data> <expected number of objects>
+        check() {
+          $ngt create -d 4 $2 $dir/$1
+          $ngt append $3 $dir/$1 $dir/$4
+          actual=$($ngt info $dir/$1 2>&1 | sed -nE 's/^The number of the objects:[[:space:]]+//p')
+          echo "$1: $actual objects (expected $5)"
+          test "$actual" -eq "$5"
+        }
+        check limit-text   ""     "-n 5"      ten.tsv        5
+        check limit-memory ""     "-m m -n 5" ten.tsv        5
+        check limit-ip     "-D i" "-n 5"      ten.tsv        5
+        check last-text    ""     ""          no-newline.tsv 3
+        check last-memory  ""     "-m m"      no-newline.tsv 3
+        check last-ip      "-D i" ""          no-newline.tsv 3
+
     - name: Build and test Python bindings
       env:
         NGT_STATIC_LIBRARY_PATH: ${{ github.workspace }}/build/lib/NGT/libngt.a
