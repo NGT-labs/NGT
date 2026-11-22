@@ -210,3 +210,17 @@ jobs:
         ./build-windows/bin/ngt/ngt.exe search -n 3 build-windows/sift-index data/sift-query-3.tsv > build-windows/search.txt
         test "$(grep -c 'Query No.' build-windows/search.txt)" -eq 3
         test "$(grep -Ec '^[123][[:space:]]+[0-9]+[[:space:]]+[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?[[:space:]]*$' build-windows/search.txt)" -eq 9
+
+    - name: Reconstruct graph with the default edge limit
+      run: |
+        set -euo pipefail
+        ngt=./build-windows/bin/ngt/ngt.exe
+        head -n 1000 data/sift-dataset-5k.tsv > build-windows/sift-1k.tsv
+        $ngt create -d 128 -i g -E 10 build-windows/anng-1k build-windows/sift-1k.tsv
+        # -A is omitted on purpose: its default must stay unbounded. When long is 32-bit,
+        # INT64_MAX used to wrap to -1, so no reverse edges were added.
+        $ngt reconstruct-graph -m s -s n -o 10 -i 20 build-windows/anng-1k build-windows/onng-1k
+        stats=$($ngt info -m e build-windows/onng-1k 2>&1 | grep '^#-nodes')
+        echo "$stats"
+        test "$(echo "$stats" | cut -d: -f4)" -eq 0   # nodes without incoming edges
+        test "$(echo "$stats" | cut -d: -f7)" -gt 10  # max outgoing edges exceeds -o

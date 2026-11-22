@@ -4754,7 +4754,7 @@ template <typename LOCAL_ID_TYPE> class QuantizerInstance : public Quantizer {
     for (size_t i = 0; i < localData.size(); i++) {
       for (size_t di = 0; di < divisionNo; di++) {
         size_t id = lids[i * divisionNo + di].id;
-        assert(!property.localCodebookState || id <= ((1UL << (sizeof(LOCAL_ID_TYPE) * 8)) - 1));
+        assert(!property.localCodebookState || id <= std::numeric_limits<LOCAL_ID_TYPE>::max());
 #ifdef NGTQ_SHARED_INVERTED_INDEX
         (*invertedIndex.at(localData[i].iiIdx))
             .at(localData[i].iiLocalIdx, invertedIndex.allocator)
@@ -4802,7 +4802,7 @@ template <typename LOCAL_ID_TYPE> class QuantizerInstance : public Quantizer {
       assert(localData.size() == lids.size());
       for (size_t i = 0; i < localData.size(); i++) {
         size_t id = lids[i].id;
-        assert(!property.localCodebookState || id <= ((1UL << (sizeof(LOCAL_ID_TYPE) * 8)) - 1));
+        assert(!property.localCodebookState || id <= std::numeric_limits<LOCAL_ID_TYPE>::max());
 #ifdef NGTQ_SHARED_INVERTED_INDEX
         (*invertedIndex.at(localData[i].iiIdx))
             .at(localData[i].iiLocalIdx, invertedIndex.allocator)
@@ -4858,7 +4858,7 @@ template <typename LOCAL_ID_TYPE> class QuantizerInstance : public Quantizer {
       assert(localData.size() == lids.size());
       for (size_t i = 0; i < localData.size(); i++) {
         size_t id = lids[i].id;
-        assert(!property.localCodebookState || id <= ((1UL << (sizeof(LOCAL_ID_TYPE) * 8)) - 1));
+        assert(!property.localCodebookState || id <= std::numeric_limits<LOCAL_ID_TYPE>::max());
 #ifdef NGTQ_SHARED_INVERTED_INDEX
         (*invertedIndex.at(localData[i].iiIdx))
             .at(localData[i].iiLocalIdx, invertedIndex.allocator)
@@ -4963,7 +4963,7 @@ template <typename LOCAL_ID_TYPE> class QuantizerInstance : public Quantizer {
     for (size_t li = 0; li < localCodebookNo; ++li) {
       for (size_t i = 0; i < localData.size(); i++) {
         size_t id = min[i * localCodebookNo + li].second + 1;
-        assert(!property.localCodebookState || id <= ((1UL << (sizeof(LOCAL_ID_TYPE) * 8)) - 1));
+        assert(!property.localCodebookState || id <= std::numeric_limits<LOCAL_ID_TYPE>::max());
 #ifdef NGTQ_SHARED_INVERTED_INDEX
         (*invertedIndex.at(localData[i].iiIdx))
             .at(localData[i].iiLocalIdx, invertedIndex.allocator)
@@ -5577,10 +5577,11 @@ template <typename LOCAL_ID_TYPE> class QuantizerInstance : public Quantizer {
               NGT::Property &localProperty
 #endif
   ) {
-    if (property.localCentroidLimit > ((1UL << (sizeof(LOCAL_ID_TYPE) * 8)) - 1)) {
+    if (property.localCentroidLimit > std::numeric_limits<LOCAL_ID_TYPE>::max()) {
       stringstream msg;
       msg << "Quantizer::Error. Local centroid limit " << property.localCentroidLimit
-          << " is too large. It must be less than " << (1UL << (sizeof(LOCAL_ID_TYPE) * 8));
+          << " is too large. It must be less than "
+          << static_cast<uint64_t>(std::numeric_limits<LOCAL_ID_TYPE>::max()) + 1;
       NGTThrowException(msg);
     }
 
