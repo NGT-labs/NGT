@@ -512,8 +512,7 @@ void NGT::Index::appendFromTextObjectFile(const std::string &data, size_t dataSi
     std::string line;
     size_t counter = 0;
     while (getline(is, line)) {
-      if (is.eof()) break;
-      if (dataSize > 0 && counter > dataSize) break;
+      if (dataSize > 0 && counter >= dataSize) break;
       vector<float> object;
       vector<string> tokens;
       NGT::Common::tokenize(line, tokens, "\t, ");
@@ -579,8 +578,7 @@ void NGT::Index::appendFromTextObjectFile(const std::string &data, size_t dataSi
       std::string line;
       size_t counter = 0;
       while (getline(is, line)) {
-        if (is.eof()) break;
-        if (dataSize > 0 && counter > dataSize) break;
+        if (dataSize > 0 && counter >= dataSize) break;
         vector<float> object;
         vector<string> tokens;
         NGT::Common::tokenize(line, tokens, "\t, ");
@@ -640,8 +638,7 @@ void NGT::Index::appendFromTextObjectFile(const std::string &data, size_t dataSi
     std::string line;
     size_t counter = 0;
     while (getline(is, line)) {
-      if (is.eof()) break;
-      if (dataSize > 0 && counter > dataSize) break;
+      if (dataSize > 0 && counter >= dataSize) break;
       vector<float> object;
       vector<string> tokens;
       NGT::Common::tokenize(line, tokens, "\t, ");
@@ -702,7 +699,7 @@ void NGT::Index::appendFromBinaryObjectFile(const std::string &data, size_t data
     StaticObjectFileLoader loader(data);
     size_t counter = 0;
     while (!loader.isEmpty()) {
-      if (dataSize > 0 && counter > dataSize) break;
+      if (dataSize > 0 && counter >= dataSize) break;
       auto object = loader.getObject();
       if (dim == 0) {
         dim = object.size();
@@ -751,7 +748,7 @@ void NGT::Index::appendFromBinaryObjectFile(const std::string &data, size_t data
       StaticObjectFileLoader loader(data);
       size_t counter = 0;
       while (!loader.isEmpty()) {
-        if (dataSize > 0 && counter > dataSize) break;
+        if (dataSize > 0 && counter >= dataSize) break;
         auto object = loader.getObject();
         if (prop.distanceType == NGT::ObjectSpace::DistanceType::DistanceTypeInnerProduct) {
           float v = maxMag - addedElement[counter];
@@ -788,7 +785,7 @@ void NGT::Index::appendFromBinaryObjectFile(const std::string &data, size_t data
     StaticObjectFileLoader loader(data);
     size_t counter = 0;
     while (!loader.isEmpty()) {
-      if (dataSize > 0 && counter > dataSize) break;
+      if (dataSize > 0 && counter >= dataSize) break;
       auto object = loader.getObject();
 #ifdef NGT_REFINEMENT
       if (refinement) {
