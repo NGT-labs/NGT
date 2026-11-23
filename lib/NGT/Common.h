@@ -333,11 +333,13 @@ class Args : public std::map<std::string, std::string> {
     }
     return true;
   }
-  long getl(const char *s, long v) {
+  // long is only 32 bits on Windows (LLP64), so parse into int64_t to keep the
+  // full range of 64-bit options and defaults on every platform.
+  int64_t getl(const char *s, int64_t v) {
     char *e;
-    long val;
+    int64_t val;
     try {
-      val = strtol(get(s).c_str(), &e, 10);
+      val = strtoll(get(s).c_str(), &e, 10);
     } catch (...) {
       return v;
     }
@@ -1198,11 +1200,11 @@ class PropertySet : public std::map<std::string, std::string> {
       set((*i).first, (*i).second);
     }
   }
-  long getl(const std::string &key, long defvalue) {
+  int64_t getl(const std::string &key, int64_t defvalue) {
     iterator it = find(key);
     if (it != end()) {
-      char *e   = 0;
-      float val = strtol(it->second.c_str(), &e, 10);
+      char *e     = 0;
+      int64_t val = strtoll(it->second.c_str(), &e, 10);
       if (*e != 0) {
         std::cerr << "Warning: Illegal property. " << key << ":" << it->second << " (" << e << ")"
                   << std::endl;
