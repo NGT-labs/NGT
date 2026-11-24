@@ -34,6 +34,7 @@ jobs:
         if [ "${{ runner.os }}" = "Linux" ]; then
           RPATH='$ORIGIN/../lib'
         else
+        
           RPATH='@loader_path/../lib'
         fi
         cmake -S . -B build \
@@ -83,6 +84,31 @@ jobs:
         # Run the self-contained Python regression tests.
         build/python-venv/bin/python -m unittest discover -s python/tests -p 'test_threaded_search.py' -v
         build/python-venv/bin/python -m unittest discover -s python/tests -p 'test_ngtpy.py' -v
+
+    - name: Copy indexes in a path with spaces
+      run: |
+        set -euo pipefail
+        ngt=install/bin/ngt
+        dir="build/dir with space"
+        mkdir -p "$dir"
+        head -n 1000 data/sift-dataset-5k.tsv > "$dir/sift-1k.tsv"
+        $ngt create -d 128 "$dir/anng" "$dir/sift-1k.tsv"
+        # GraphOptimizer and repair used to copy the index with system("cp -r ..."),
+        # which split these paths at the spaces.
+        $ngt reconstruct-graph -m s -s n -o 10 -i 20 "$dir/anng" "$dir/onng"
+        $ngt search -n 3 "$dir/onng" data/sift-query-3.tsv > "$dir/search.txt"
+        test "$(grep -c 'Query No.' "$dir/search.txt")" -eq 3
+        $ngt repair -m r "$dir/anng"
+        test -f "$dir/anng.repair/grp"
+        build/python-venv/bin/python - "$dir" <<'EOF'
+        import sys
+        import ngtpy
+        path = sys.argv[1]
+        optimizer = ngtpy.Optimizer(num_of_outgoings=10, num_of_incomings=20, log_disabled=True)
+        optimizer.set_processing_modes(False, False, False, False)
+        optimizer.execute(path + "/anng", path + "/onng-python")
+        assert len(ngtpy.Index(path + "/onng-python").search([0.0] * 128, 3)) == 3
+        EOF
 
   linux-core-openmp-disabled:
     runs-on: ubuntu-latest

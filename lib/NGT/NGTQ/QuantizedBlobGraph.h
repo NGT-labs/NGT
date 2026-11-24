@@ -24,6 +24,7 @@
 #include "NGT/NGTQ/QuantizedGraph.h"
 #include "NGT/NGTQ/Optimizer.h"
 #include "NGT/NGTQ/HierarchicalKmeans.h"
+#include "NGT/FileSystem.h"
 
 #include <thread>
 
@@ -2096,23 +2097,18 @@ class Index : public NGTQ::Index {
 
       {
         if (access(QBG::Index::getBlobFile(indexPath).c_str(), F_OK) == 0) {
-          const std::string comcp =
-              "cp -f " + QBG::Index::getBlobFile(indexPath) + " " + QBG::Index::getStoredBlobFile(indexPath);
-          auto stat = system(comcp.c_str());
-          if (stat == -1) {
-            std::cerr << "Warning. Cannot execute cp. " << comcp << std::endl;
-          } else if (WIFEXITED(stat)) {
-            int exitStatus = WEXITSTATUS(stat);
-            if (exitStatus != 0) {
-              std::cerr << "Warning. Cannot cp the blob. " << exitStatus << std::endl;
-            }
+          try {
+            NGT::FileSystem::copyFile(QBG::Index::getBlobFile(indexPath), QBG::Index::getStoredBlobFile(indexPath));
+          } catch (NGT::Exception &err) {
+            std::cerr << "Warning. Cannot cp the blob. " << err.what() << std::endl;
           }
         }
         char *s = getenv("NGT_NOT_REMOVE_WORKSPACE");
         if (s == 0) {
-          const std::string comrmdir = "rm -rf " + indexPath + "/" + getWorkspaceName();
-          if (system(comrmdir.c_str()) == -1) {
-            std::cerr << "Warning. cannot remove the workspace directory. " << comrmdir << std::endl;
+          try {
+            NGT::FileSystem::removeAll(indexPath + "/" + getWorkspaceName());
+          } catch (NGT::Exception &err) {
+            std::cerr << "Warning. cannot remove the workspace directory. " << err.what() << std::endl;
           }
         }
       }
@@ -2307,20 +2303,17 @@ class Index : public NGTQ::Index {
         int numOfQueries                             = 200;
         int numOfResultantObjects                    = 20;
         graphOptimizer.set(numOfOutgoingEdges, numOfIncomingEdges, numOfQueries, numOfResultantObjects);
-        const std::string rmcom = "rm -rf " + dst;
         try {
           graphOptimizer.execute(dst, src);
         } catch (NGT::Exception &err) {
-          if (system(rmcom.c_str()) == -1) {
-            std::cerr << "Warning. remove is failed. \"" << rmcom << "\"" << std::endl;
+          try {
+            NGT::FileSystem::removeAll(dst);
+          } catch (NGT::Exception &rmerr) {
+            std::cerr << "Warning. remove is failed. " << rmerr.what() << std::endl;
           }
           throw err;
         }
-        if (system(rmcom.c_str()) == -1) {
-          std::stringstream msg;
-          msg << "Error! Removing is failed. \"" << rmcom << "\" " << errno << ":" << std::strerror(errno);
-          NGTThrowException(msg);
-        }
+        NGT::FileSystem::removeAll(dst);
       }
 
       if (property.centroidCreationMode != NGTQ::CentroidCreationModeStaticLayer &&

@@ -1420,12 +1420,12 @@ void NGT::Command::repair(Args &args) {
   }
   string path = indexPath;
   if (mode == 'r') {
-    path             = indexPath + ".repair";
-    const string com = "cp -r " + indexPath + " " + path;
-    int stat         = system(com.c_str());
-    if (stat != 0) {
+    path = indexPath + ".repair";
+    try {
+      NGT::FileSystem::copyDirectory(indexPath, path);
+    } catch (NGT::Exception &err) {
       std::stringstream msg;
-      msg << "ngt::repair: Cannot create the specified index. " << path << std::endl;
+      msg << "ngt::repair: Cannot create the specified index. " << path << " " << err.what() << std::endl;
       msg << usage;
       NGTThrowException(msg);
     }
