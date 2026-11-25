@@ -19,6 +19,7 @@
 
 #include "NGT/Index.h"
 #include "NGT/NGTQ/Quantizer.h"
+#include "NGT/NGTQ/FilteredDistanceBucketSorter.h"
 #include <algorithm>
 #define NGTQ_QUANTIZED_TREE
 #define REMOVE_SEED_PROC
@@ -442,8 +443,10 @@ class Index : public NGT::Index {
   }
 
 #if !defined(NGTQG_CLASSIC_SEARCH)
+  template <bool FILTERED = false>
   void searchQuantizedGraphUsingDistanceSorter(NGT::NeighborhoodGraph &graph, NGTQG::SearchContainer &sc,
-                                               NGT::Node::NodeID seedID) {
+                                               NGT::Node::NodeID seedID,
+                                               const NGT::FilterBitmapView *filter = nullptr) {
     auto specifiedRadius                                   = sc.radius;
     NGTQ::Quantizer &quantizer                             = quantizedIndex.getQuantizer();
     NGTQ::QuantizedObjectDistance &quantizedObjectDistance = quantizer.getQuantizedObjectDistance();
@@ -476,14 +479,22 @@ class Index : public NGT::Index {
     if (sc.explorationCoefficient == 0.0) {
       sc.explorationCoefficient = NGT_EXPLORATION_COEFFICIENT;
     }
-    size_t threadID = omp_get_thread_num();
-    if (threadID >= candidateNodePools.size()) {
-      candidateNodePools.resize(threadID + 1);
-    }
-    NGT::DistanceSorter<> *__restrict__ uncheckedPtr = &candidateNodePools[threadID];
+    auto *__restrict__ uncheckedPtr = [&]() {
+      if constexpr (FILTERED) {
+        // Allocate only on the filtered path; no bitmap is retained here.
+        static thread_local FilteredDistanceBucketSorter sorter;
+        return &sorter;
+      } else {
+        size_t threadID = omp_get_thread_num();
+        if (threadID >= candidateNodePools.size()) {
+          candidateNodePools.resize(threadID + 1);
+        }
+        return &candidateNodePools[threadID];
+      }
+    }();
 
 #ifdef NGTQG_DISTANCE_HEAP_SORTER
-    uncheckedPtr->setMode(sc.distanceHeapSorterMode);
+    if constexpr (!FILTERED) uncheckedPtr->setMode(sc.distanceHeapSorterMode);
 #endif
     uncheckedPtr->reset(sc.size, sc.resultExpansion);
     auto &distanceChecked =
@@ -535,7 +546,12 @@ class Index : public NGT::Index {
 #endif
           result.id       = objid;
           result.distance = distance;
-          int pushResult  = uncheckedPtr->push(result);
+          int pushResult;
+          if constexpr (FILTERED) {
+            pushResult = uncheckedPtr->push(result, filter->test(objid));
+          } else {
+            pushResult = uncheckedPtr->push(result);
+          }
 #ifdef NGTQG_PREFETCH
           NGT::MemoryCache::prefetch(reinterpret_cast<uint8_t *>(&quantizedNodes[objid]), 64);
 #endif
@@ -559,6 +575,14 @@ class Index : public NGT::Index {
     size_t expandedSize = sc.resultExpansion > 1.0 ? sc.size * sc.resultExpansion : sc.size;
     NGT::DistanceSorter<>::Object final_results[expandedSize];
     size_t resultCount = uncheckedPtr->getObjects(final_results);
+    if constexpr (FILTERED) {
+      if (resultCount == 0) {
+        if (sc.resultIsAvailable()) sc.getResult().clear();
+        while (!sc.workingResult.empty())
+          sc.workingResult.pop();
+        return;
+      }
+    }
     if (sc.resultIsAvailable()) {
       NGT::ObjectDistances &qresults = sc.getResult();
       if (sc.resultExpansion <= 1.0) {
@@ -635,6 +659,7 @@ class Index : public NGT::Index {
 #ifdef NGTQG_X86SIMDSORT
           {
             size_t k = sc.size;
+            if constexpr (FILTERED) k = std::min(k, resultCount);
             if (quantizedIndex.getQuantizer().property.orderedSearchRanking == true) {
               x86simdsort::keyvalue_partial_sort(distances, ids, k, resultCount, false, false);
             } else {
@@ -646,17 +671,27 @@ class Index : public NGT::Index {
             }
           }
 #else
+          const size_t refineSize = FILTERED ? std::min(sc.size, qresults.size()) : sc.size;
           if (quantizedIndex.getQuantizer().property.orderedSearchRanking == true) {
-            std::partial_sort(qresults.begin(), qresults.begin() + sc.size, qresults.end());
+            std::partial_sort(qresults.begin(), qresults.begin() + refineSize, qresults.end());
           } else {
-            std::nth_element(qresults.begin(), qresults.begin() + sc.size, qresults.end());
+            std::nth_element(qresults.begin(), qresults.begin() + refineSize, qresults.end());
           }
 #endif
 
           if (specifiedRadius < std::numeric_limits<float>::max()) {
-            auto pos =
-                std::upper_bound(qresults.begin(), qresults.end(), NGT::ObjectDistance(0, specifiedRadius));
-            qresults.resize(distance(qresults.begin(), pos));
+            if constexpr (FILTERED) {
+              // Only the first k entries were sorted/selected. Trim that
+              // selection, including the unordered-ranking configuration.
+              qresults.resize(std::min(sc.size, qresults.size()));
+              qresults.erase(std::remove_if(qresults.begin(), qresults.end(),
+                                            [&](const auto &o) { return o.distance > specifiedRadius; }),
+                             qresults.end());
+            } else {
+              auto pos =
+                  std::upper_bound(qresults.begin(), qresults.end(), NGT::ObjectDistance(0, specifiedRadius));
+              qresults.resize(distance(qresults.begin(), pos));
+            }
           }
         }
         if (sc.size < qresults.size()) {
@@ -691,12 +726,23 @@ class Index : public NGT::Index {
             if (sc.workingResult.size() < sc.size) {
               sc.workingResult.push(o);
             } else {
-              sc.workingResult.push_pop(o);
+              if constexpr (FILTERED) {
+                // push_pop assumes the incoming object improves the heap.
+                if (o < sc.workingResult.top()) sc.workingResult.push_pop(o);
+              } else {
+                sc.workingResult.push_pop(o);
+              }
             }
           }
           if (specifiedRadius < std::numeric_limits<float>::max()) {
-            while (sc.workingResult.top().distance > specifiedRadius && !sc.workingResult.empty()) {
-              sc.workingResult.pop();
+            if constexpr (FILTERED) {
+              while (!sc.workingResult.empty() && sc.workingResult.top().distance > specifiedRadius) {
+                sc.workingResult.pop();
+              }
+            } else {
+              while (sc.workingResult.top().distance > specifiedRadius && !sc.workingResult.empty()) {
+                sc.workingResult.pop();
+              }
             }
           }
         }
@@ -764,11 +810,24 @@ class Index : public NGT::Index {
   }
 
 #ifdef NGTQG_CLASSIC_SEARCH
-  void searchUsingDistanceSorter(NGTQG::SearchQuery &sq) {
+  void searchUsingDistanceSorter(NGTQG::SearchQuery &sq, const NGT::FilterBitmapView *filter = nullptr) {
     NGTThrowException("searchUsingDistanceBucket is unavailable.");
   }
 #else
-  void searchUsingDistanceSorter(NGTQG::SearchQuery &sq) {
+  void searchUsingDistanceSorter(NGTQG::SearchQuery &sq, const NGT::FilterBitmapView *filter = nullptr) {
+    if (filter != nullptr) {
+      if (!quantizedIndex.getQuantizer().property.treeQuantization) {
+        NGTThrowException("Cannot search with a filter. The quantized tree is unavailable.");
+      }
+      if (sq.size == 0 || filter->allowedCount() == 0) {
+        if (sq.resultIsAvailable()) sq.getResult().clear();
+        while (!sq.workingResult.empty())
+          sq.workingResult.pop();
+        sq.distanceComputationCount = 0;
+        sq.visitCount               = 0;
+        return;
+      }
+    }
 #ifdef NGTQG_TIMER
     NGT::Timer timer_whole_func;
     timer_whole_func.start();
@@ -803,8 +862,14 @@ class Index : public NGT::Index {
       }
       size_t nOfObjects = NGT::Index::getObjectSpace().getRepository().size() - 1;
       auto seedNodeID   = seedLeafNodeID + nOfObjects;
-      NGTQG::Index::searchQuantizedGraphUsingDistanceSorter(static_cast<NGT::GraphIndex &>(index), sc,
-                                                            seedNodeID);
+      if (filter == nullptr) {
+        NGTQG::Index::searchQuantizedGraphUsingDistanceSorter<false>(static_cast<NGT::GraphIndex &>(index),
+                                                                     sc, seedNodeID);
+      } else {
+        NGTQG::Index::searchQuantizedGraphUsingDistanceSorter<true>(static_cast<NGT::GraphIndex &>(index), sc,
+                                                                    seedNodeID, filter);
+        if (!sq.resultIsAvailable()) sq.workingResult = std::move(sc.workingResult);
+      }
       sq.distanceComputationCount = sc.distanceComputationCount;
       sq.visitCount               = sc.visitCount;
     } catch (NGT::Exception &err) {
@@ -814,6 +879,10 @@ class Index : public NGT::Index {
     deleteObject(query);
   }
 #endif
+
+  void searchUsingDistanceSorter(NGTQG::SearchQuery &sq, const NGT::FilterBitmapView &filter) {
+    searchUsingDistanceSorter(sq, &filter);
+  }
 
   void search(NGTQG::SearchQuery &sq) {
 #ifdef NGTQG_CLASSIC_SEARCH

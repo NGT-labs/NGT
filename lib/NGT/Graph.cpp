@@ -724,6 +724,43 @@ void NeighborhoodGraph::searchReadOnlyGraph(NGT::SearchContainer &sc, ObjectDist
 #else // NGT_GRAPH_COMPACT_READ_ONLY_GRAPH
 template <typename COMPARATOR, typename CHECK_LIST>
 void NeighborhoodGraph::searchReadOnlyGraph(NGT::SearchContainer &sc, ObjectDistances &seeds) {
+  searchReadOnlyGraphImpl<COMPARATOR, CHECK_LIST, false>(sc, seeds, nullptr);
+}
+
+template <typename COMPARATOR, typename CHECK_LIST>
+void NeighborhoodGraph::searchReadOnlyGraph(NGT::SearchContainer &sc, ObjectDistances &seeds,
+                                            const FilterBitmapView &filter) {
+  searchReadOnlyGraphImpl<COMPARATOR, CHECK_LIST, true>(sc, seeds, &filter);
+}
+
+template <typename CHECK_LIST>
+void NeighborhoodGraph::setupFilteredSeeds(NGT::SearchContainer &sc, ObjectDistances &seeds,
+                                           ResultSet &results, UncheckedSet &unchecked,
+                                           CHECK_LIST &distanceChecked, const FilterBitmapView &filter) {
+  std::sort(seeds.begin(), seeds.end());
+  for (const auto &seed : seeds) {
+    if (results.size() >= sc.size || seed.distance > sc.radius) {
+      break;
+    }
+    if (seed.distance != std::numeric_limits<float>::max() && filter.test(seed.id)) {
+      results.push(seed);
+    }
+  }
+  if (results.size() >= sc.size) {
+    sc.radius = results.top().distance;
+  }
+  for (const auto &seed : seeds) {
+    if (seed.distance == std::numeric_limits<float>::max()) {
+      continue;
+    }
+    distanceChecked.insert(seed.id);
+    unchecked.push(seed);
+  }
+}
+
+template <typename COMPARATOR, typename CHECK_LIST, bool FILTERED>
+void NeighborhoodGraph::searchReadOnlyGraphImpl(NGT::SearchContainer &sc, ObjectDistances &seeds,
+                                                const FilterBitmapView *filter) {
   if (sc.explorationCoefficient == 0.0) {
     sc.explorationCoefficient = NGT_EXPLORATION_COEFFICIENT;
   }
@@ -744,7 +781,11 @@ void NeighborhoodGraph::searchReadOnlyGraph(NGT::SearchContainer &sc, ObjectDist
   CHECK_LIST distanceChecked(searchRepository.size());
   ResultSet results;
   setupDistances(sc, seeds, COMPARATOR::compare);
-  setupSeeds(sc, seeds, results, unchecked, distanceChecked);
+  if constexpr (FILTERED) {
+    setupFilteredSeeds(sc, seeds, results, unchecked, distanceChecked, *filter);
+  } else {
+    setupSeeds(sc, seeds, results, unchecked, distanceChecked);
+  }
 
 #ifdef RESULT_DEFINED_RANGE
   Distance explorationRadius;
@@ -811,16 +852,22 @@ void NeighborhoodGraph::searchReadOnlyGraph(NGT::SearchContainer &sc, ObjectDist
         result.set(neighborptr->first, distance);
         unchecked.push(result);
         if (distance <= sc.radius) {
-          if (results.size() >= sc.size) {
-            results.push_pop(result);
-            sc.radius = results.top().distance;
+          bool accepted = true;
+          if constexpr (FILTERED) {
+            accepted = filter->test(result.id);
+          }
+          if (accepted) {
+            if (results.size() >= sc.size) {
+              results.push_pop(result);
+              sc.radius = results.top().distance;
 #ifdef RESULT_DEFINED_RANGE
-            explorationRadius = explorationCoefficient * sc.radius;
+              explorationRadius = explorationCoefficient * sc.radius;
 #else
-            explorationRadius = sc.explorationCoefficient * sc.radius;
+              explorationRadius = sc.explorationCoefficient * sc.radius;
 #endif
-          } else {
-            results.push(result);
+            } else {
+              results.push(result);
+            }
           }
         }
       }
@@ -844,6 +891,272 @@ void NeighborhoodGraph::searchReadOnlyGraph(NGT::SearchContainer &sc, ObjectDist
 }
 #endif // NGT_GRAPH_COMPACT_READ_ONLY_GRAPH
 
+#endif
+
+#ifdef NGT_GRAPH_READ_ONLY_GRAPH
+NeighborhoodGraph::Search::Methods NeighborhoodGraph::Search::getMethods(NGT::ObjectSpace::DistanceType dtype,
+                                                                         NGT::ObjectSpace::ObjectType otype,
+                                                                         size_t size) {
+  if (size < 5000000) {
+    switch (otype) {
+    case NGT::ObjectSpace::ObjectTypeUnset:
+    case NGT::ObjectSpace::Float:
+      switch (dtype) {
+      case NGT::ObjectSpace::DistanceTypeNormalizedCosine:
+        return makeMethods<PrimitiveComparator::NormalizedCosineSimilarityFloat, DistanceCheckedSet>(
+            normalizedCosineSimilarityFloat);
+      case NGT::ObjectSpace::DistanceTypeCosine:
+        return makeMethods<PrimitiveComparator::CosineSimilarityFloat, DistanceCheckedSet>(
+            cosineSimilarityFloat);
+      case NGT::ObjectSpace::DistanceTypeNormalizedAngle:
+        return makeMethods<PrimitiveComparator::NormalizedAngleFloat, DistanceCheckedSet>(
+            normalizedAngleFloat);
+      case NGT::ObjectSpace::DistanceTypeAngle:
+        return makeMethods<PrimitiveComparator::AngleFloat, DistanceCheckedSet>(angleFloat);
+      case NGT::ObjectSpace::DistanceTypeNormalizedL2:
+        return makeMethods<PrimitiveComparator::NormalizedL2Float, DistanceCheckedSet>(normalizedL2Float);
+      case NGT::ObjectSpace::DistanceTypeL2:
+        return makeMethods<PrimitiveComparator::L2Float, DistanceCheckedSet>(l2Float);
+      case NGT::ObjectSpace::DistanceTypeL1:
+        return makeMethods<PrimitiveComparator::L1Float, DistanceCheckedSet>(l1Float);
+      case NGT::ObjectSpace::DistanceTypeSparseJaccard:
+        return makeMethods<PrimitiveComparator::SparseJaccardFloat, DistanceCheckedSet>(sparseJaccardFloat);
+      case NGT::ObjectSpace::DistanceTypePoincare:
+        return makeMethods<PrimitiveComparator::PoincareFloat, DistanceCheckedSet>(
+            poincareFloat); // added by Nyapicom
+      case NGT::ObjectSpace::DistanceTypeLorentz:
+        return makeMethods<PrimitiveComparator::LorentzFloat, DistanceCheckedSet>(
+            lorentzFloat); // added by Nyapicom
+      default: return makeMethods<PrimitiveComparator::L2Float, DistanceCheckedSet>(l2Float);
+      }
+      break;
+    case NGT::ObjectSpace::Uint8:
+      switch (dtype) {
+      case NGT::ObjectSpace::DistanceTypeHamming:
+        return makeMethods<PrimitiveComparator::HammingUint8, DistanceCheckedSet>(hammingUint8);
+      case NGT::ObjectSpace::DistanceTypeJaccard:
+        return makeMethods<PrimitiveComparator::JaccardUint8, DistanceCheckedSet>(jaccardUint8);
+      case NGT::ObjectSpace::DistanceTypeL2:
+        return makeMethods<PrimitiveComparator::L2Uint8, DistanceCheckedSet>(l2Uint8);
+      case NGT::ObjectSpace::DistanceTypeL1:
+        return makeMethods<PrimitiveComparator::L1Uint8, DistanceCheckedSet>(l1Uint8);
+      default: return makeMethods<PrimitiveComparator::L2Uint8, DistanceCheckedSet>(l2Uint8);
+      }
+      break;
+#ifdef NGT_HALF_FLOAT
+    case NGT::ObjectSpace::Float16:
+      switch (dtype) {
+      case NGT::ObjectSpace::DistanceTypeNormalizedCosine:
+        return makeMethods<PrimitiveComparator::NormalizedCosineSimilarityFloat16, DistanceCheckedSet>(
+            normalizedCosineSimilarityFloat16);
+      case NGT::ObjectSpace::DistanceTypeCosine:
+        return makeMethods<PrimitiveComparator::CosineSimilarityFloat16, DistanceCheckedSet>(
+            cosineSimilarityFloat16);
+      case NGT::ObjectSpace::DistanceTypeNormalizedAngle:
+        return makeMethods<PrimitiveComparator::NormalizedAngleFloat16, DistanceCheckedSet>(
+            normalizedAngleFloat16);
+      case NGT::ObjectSpace::DistanceTypeAngle:
+        return makeMethods<PrimitiveComparator::AngleFloat16, DistanceCheckedSet>(angleFloat16);
+      case NGT::ObjectSpace::DistanceTypeNormalizedL2:
+        return makeMethods<PrimitiveComparator::NormalizedL2Float16, DistanceCheckedSet>(normalizedL2Float16);
+      case NGT::ObjectSpace::DistanceTypeL2:
+        return makeMethods<PrimitiveComparator::L2Float16, DistanceCheckedSet>(l2Float16);
+      case NGT::ObjectSpace::DistanceTypeL1:
+        return makeMethods<PrimitiveComparator::L1Float16, DistanceCheckedSet>(l1Float16);
+      case NGT::ObjectSpace::DistanceTypeSparseJaccard:
+        return makeMethods<PrimitiveComparator::SparseJaccardFloat16, DistanceCheckedSet>(
+            sparseJaccardFloat16);
+      case NGT::ObjectSpace::DistanceTypePoincare:
+        return makeMethods<PrimitiveComparator::PoincareFloat16, DistanceCheckedSet>(
+            poincareFloat16); // added by Nyapicom
+      case NGT::ObjectSpace::DistanceTypeLorentz:
+        return makeMethods<PrimitiveComparator::LorentzFloat16, DistanceCheckedSet>(
+            lorentzFloat16); // added by Nyapicom
+      default: return makeMethods<PrimitiveComparator::L2Float16, DistanceCheckedSet>(l2Float16);
+      }
+      break;
+#endif
+    case NGT::ObjectSpace::Qsuint8:
+      switch (dtype) {
+      case NGT::ObjectSpace::DistanceTypeL2:
+        return makeMethods<PrimitiveComparator::L2Qsint8, DistanceCheckedSet>(l2Qsint8);
+      case NGT::ObjectSpace::DistanceTypeInnerProduct:
+        return makeMethods<PrimitiveComparator::InnerProductQsint8, DistanceCheckedSet>(innerProductQsint8);
+      case NGT::ObjectSpace::DistanceTypeNormalizedCosine:
+        return makeMethods<PrimitiveComparator::NormalizedCosineSimilarityQsint8, DistanceCheckedSet>(
+            normalizedCosineSimilarityQsint8);
+      default: return makeMethods<PrimitiveComparator::L2Qsint8, DistanceCheckedSet>(l2Qsint8);
+      }
+      break;
+#ifdef NGT_PQ4
+    case NGT::ObjectSpace::Qint4:
+      switch (dtype) {
+      case NGT::ObjectSpace::DistanceTypeL2:
+        return makeMethods<PrimitiveComparator::L2Qint4, DistanceCheckedSet>(l2Qint4);
+      case NGT::ObjectSpace::DistanceTypeCosine:
+        return makeMethods<PrimitiveComparator::CosineSimilarityQint4, DistanceCheckedSet>(
+            cosineSimilarityQint4);
+      case NGT::ObjectSpace::DistanceTypeInnerProduct:
+        return makeMethods<PrimitiveComparator::InnerProductQint4, DistanceCheckedSet>(innerProductQint4);
+      case NGT::ObjectSpace::DistanceTypeNormalizedCosine:
+        return makeMethods<PrimitiveComparator::NormalizedCosineSimilarityQint4, DistanceCheckedSet>(
+            normalizedCosineSimilarityQint4);
+      default: return makeMethods<PrimitiveComparator::L2Qint4, DistanceCheckedSet>(l2Qint4);
+      }
+      break;
+#endif
+    default: {
+      std::stringstream msg;
+      msg << "NGT::Graph::Search: Not supported object type. " << otype;
+      NGTThrowException(msg);
+      break;
+    }
+    }
+    return makeMethods<PrimitiveComparator::L1Uint8, DistanceCheckedSet>(l1Uint8);
+  } else {
+    switch (otype) {
+    case NGT::ObjectSpace::Float:
+      switch (dtype) {
+      case NGT::ObjectSpace::DistanceTypeNormalizedCosine:
+        return makeMethods<PrimitiveComparator::NormalizedCosineSimilarityFloat,
+                           DistanceCheckedSetForLargeDataset>(normalizedCosineSimilarityFloatForLargeDataset);
+      case NGT::ObjectSpace::DistanceTypeCosine:
+        return makeMethods<PrimitiveComparator::CosineSimilarityFloat, DistanceCheckedSetForLargeDataset>(
+            cosineSimilarityFloatForLargeDataset);
+      case NGT::ObjectSpace::DistanceTypeNormalizedAngle:
+        return makeMethods<PrimitiveComparator::NormalizedAngleFloat, DistanceCheckedSetForLargeDataset>(
+            normalizedAngleFloatForLargeDataset);
+      case NGT::ObjectSpace::DistanceTypeAngle:
+        return makeMethods<PrimitiveComparator::AngleFloat, DistanceCheckedSetForLargeDataset>(
+            angleFloatForLargeDataset);
+      case NGT::ObjectSpace::DistanceTypeNormalizedL2:
+        return makeMethods<PrimitiveComparator::NormalizedL2Float, DistanceCheckedSetForLargeDataset>(
+            normalizedL2FloatForLargeDataset);
+      case NGT::ObjectSpace::DistanceTypeL2:
+        return makeMethods<PrimitiveComparator::L2Float, DistanceCheckedSetForLargeDataset>(
+            l2FloatForLargeDataset);
+      case NGT::ObjectSpace::DistanceTypeL1:
+        return makeMethods<PrimitiveComparator::L1Float, DistanceCheckedSetForLargeDataset>(
+            l1FloatForLargeDataset);
+      case NGT::ObjectSpace::DistanceTypeSparseJaccard:
+        return makeMethods<PrimitiveComparator::SparseJaccardFloat, DistanceCheckedSetForLargeDataset>(
+            sparseJaccardFloatForLargeDataset);
+      case NGT::ObjectSpace::DistanceTypePoincare:
+        return makeMethods<PrimitiveComparator::PoincareFloat, DistanceCheckedSetForLargeDataset>(
+            poincareFloatForLargeDataset);
+      case NGT::ObjectSpace::DistanceTypeLorentz:
+        return makeMethods<PrimitiveComparator::LorentzFloat, DistanceCheckedSetForLargeDataset>(
+            lorentzFloatForLargeDataset);
+      default:
+        return makeMethods<PrimitiveComparator::L2Float, DistanceCheckedSetForLargeDataset>(
+            l2FloatForLargeDataset);
+      }
+      break;
+    case NGT::ObjectSpace::Uint8:
+      switch (dtype) {
+      case NGT::ObjectSpace::DistanceTypeHamming:
+        return makeMethods<PrimitiveComparator::HammingUint8, DistanceCheckedSetForLargeDataset>(
+            hammingUint8ForLargeDataset);
+      case NGT::ObjectSpace::DistanceTypeJaccard:
+        return makeMethods<PrimitiveComparator::JaccardUint8, DistanceCheckedSetForLargeDataset>(
+            jaccardUint8ForLargeDataset);
+      case NGT::ObjectSpace::DistanceTypeL2:
+        return makeMethods<PrimitiveComparator::L2Uint8, DistanceCheckedSetForLargeDataset>(
+            l2Uint8ForLargeDataset);
+      case NGT::ObjectSpace::DistanceTypeL1:
+        return makeMethods<PrimitiveComparator::L1Uint8, DistanceCheckedSetForLargeDataset>(
+            l1Uint8ForLargeDataset);
+      default:
+        return makeMethods<PrimitiveComparator::L2Uint8, DistanceCheckedSetForLargeDataset>(
+            l2Uint8ForLargeDataset);
+      }
+      break;
+#ifdef NGT_HALF_FLOAT
+    case NGT::ObjectSpace::Float16:
+      switch (dtype) {
+      case NGT::ObjectSpace::DistanceTypeNormalizedCosine:
+        return makeMethods<PrimitiveComparator::NormalizedCosineSimilarityFloat16,
+                           DistanceCheckedSetForLargeDataset>(
+            normalizedCosineSimilarityFloat16ForLargeDataset);
+      case NGT::ObjectSpace::DistanceTypeCosine:
+        return makeMethods<PrimitiveComparator::CosineSimilarityFloat16, DistanceCheckedSetForLargeDataset>(
+            cosineSimilarityFloat16ForLargeDataset);
+      case NGT::ObjectSpace::DistanceTypeNormalizedAngle:
+        return makeMethods<PrimitiveComparator::NormalizedAngleFloat16, DistanceCheckedSetForLargeDataset>(
+            normalizedAngleFloat16ForLargeDataset);
+      case NGT::ObjectSpace::DistanceTypeAngle:
+        return makeMethods<PrimitiveComparator::AngleFloat16, DistanceCheckedSetForLargeDataset>(
+            angleFloat16ForLargeDataset);
+      case NGT::ObjectSpace::DistanceTypeNormalizedL2:
+        return makeMethods<PrimitiveComparator::NormalizedL2Float16, DistanceCheckedSetForLargeDataset>(
+            normalizedL2Float16ForLargeDataset);
+      case NGT::ObjectSpace::DistanceTypeL2:
+        return makeMethods<PrimitiveComparator::L2Float16, DistanceCheckedSetForLargeDataset>(
+            l2Float16ForLargeDataset);
+      case NGT::ObjectSpace::DistanceTypeL1:
+        return makeMethods<PrimitiveComparator::L1Float16, DistanceCheckedSetForLargeDataset>(
+            l1Float16ForLargeDataset);
+      case NGT::ObjectSpace::DistanceTypeSparseJaccard:
+        return makeMethods<PrimitiveComparator::SparseJaccardFloat16, DistanceCheckedSetForLargeDataset>(
+            sparseJaccardFloat16ForLargeDataset);
+      case NGT::ObjectSpace::DistanceTypePoincare:
+        return makeMethods<PrimitiveComparator::PoincareFloat16, DistanceCheckedSetForLargeDataset>(
+            poincareFloat16ForLargeDataset);
+      case NGT::ObjectSpace::DistanceTypeLorentz:
+        return makeMethods<PrimitiveComparator::LorentzFloat16, DistanceCheckedSetForLargeDataset>(
+            lorentzFloat16ForLargeDataset);
+      default:
+        return makeMethods<PrimitiveComparator::L2Float16, DistanceCheckedSetForLargeDataset>(
+            l2Float16ForLargeDataset);
+      }
+#endif
+    case NGT::ObjectSpace::Qsuint8:
+      switch (dtype) {
+      case NGT::ObjectSpace::DistanceTypeL2:
+        return makeMethods<PrimitiveComparator::L2Qsint8, DistanceCheckedSetForLargeDataset>(
+            l2Qsint8ForLargeDataset);
+      case NGT::ObjectSpace::DistanceTypeInnerProduct:
+        return makeMethods<PrimitiveComparator::InnerProductQsint8, DistanceCheckedSetForLargeDataset>(
+            innerProductQsint8ForLargeDataset);
+      case NGT::ObjectSpace::DistanceTypeNormalizedCosine:
+        return makeMethods<PrimitiveComparator::NormalizedCosineSimilarityQsint8,
+                           DistanceCheckedSetForLargeDataset>(
+            normalizedCosineSimilarityQsint8ForLargeDataset);
+      default:
+        return makeMethods<PrimitiveComparator::L2Qsint8, DistanceCheckedSetForLargeDataset>(
+            l2Qsint8ForLargeDataset);
+      }
+      break;
+#ifdef NGT_PQ4
+    case NGT::ObjectSpace::Qint4:
+      switch (dtype) {
+      case NGT::ObjectSpace::DistanceTypeL2:
+        return makeMethods<PrimitiveComparator::L2Qint4, DistanceCheckedSetForLargeDataset>(
+            l2Qint4ForLargeDataset);
+      case NGT::ObjectSpace::DistanceTypeCosine:
+        return makeMethods<PrimitiveComparator::CosineSimilarityQint4, DistanceCheckedSetForLargeDataset>(
+            cosineSimilarityQint4ForLargeDataset);
+      case NGT::ObjectSpace::DistanceTypeInnerProduct:
+        return makeMethods<PrimitiveComparator::InnerProductQint4, DistanceCheckedSetForLargeDataset>(
+            innerProductQint4ForLargeDataset);
+      case NGT::ObjectSpace::DistanceTypeNormalizedCosine:
+        return makeMethods<PrimitiveComparator::NormalizedCosineSimilarityQint4,
+                           DistanceCheckedSetForLargeDataset>(normalizedCosineSimilarityQint4ForLargeDataset);
+      default: return makeMethods<PrimitiveComparator::L2Qint4, DistanceCheckedSet>(l2Qint4);
+      }
+      break;
+#endif
+    default: {
+      std::stringstream msg;
+      msg << "NGT::Graph::Search: Not supported object type. " << otype;
+      NGTThrowException(msg);
+      break;
+    }
+    }
+    return makeMethods<PrimitiveComparator::L1Uint8, DistanceCheckedSetForLargeDataset>(
+        l1Uint8ForLargeDataset);
+  }
+}
 #endif
 
 void NeighborhoodGraph::search(NGT::SearchContainer &sc, ObjectDistances &seeds) {

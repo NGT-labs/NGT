@@ -1325,8 +1325,10 @@ NGT::GraphIndex::GraphIndex(const string &allocator, bool rdonly) : readOnly(rdo
   }
   initialize(allocator, prop);
 #ifdef NGT_GRAPH_READ_ONLY_GRAPH
-  searchUnupdatableGraph = NeighborhoodGraph::Search::getMethod(prop.distanceType, prop.objectType,
-                                                                objectSpace->getRepository().size());
+  auto methods                   = NeighborhoodGraph::Search::getMethods(prop.distanceType, prop.objectType,
+                                                                         objectSpace->getRepository().size());
+  searchUnupdatableGraph         = methods.plain;
+  searchUnupdatableGraphFiltered = methods.filtered;
 #endif
 }
 
@@ -1384,13 +1386,18 @@ NGT::GraphIndex::GraphIndex(const string &database, bool rdOnly, NGT::Index::Ope
   loadIndex(database, readOnly, openType);
 #ifdef NGT_GRAPH_READ_ONLY_GRAPH
   if (prop.searchType == "Large") {
-    searchUnupdatableGraph =
-        NeighborhoodGraph::Search::getMethod(prop.distanceType, prop.objectType, 10000000);
+    auto methods = NeighborhoodGraph::Search::getMethods(prop.distanceType, prop.objectType, 10000000);
+    searchUnupdatableGraph         = methods.plain;
+    searchUnupdatableGraphFiltered = methods.filtered;
   } else if (prop.searchType == "Small") {
-    searchUnupdatableGraph = NeighborhoodGraph::Search::getMethod(prop.distanceType, prop.objectType, 0);
+    auto methods           = NeighborhoodGraph::Search::getMethods(prop.distanceType, prop.objectType, 0);
+    searchUnupdatableGraph = methods.plain;
+    searchUnupdatableGraphFiltered = methods.filtered;
   } else {
-    searchUnupdatableGraph = NeighborhoodGraph::Search::getMethod(prop.distanceType, prop.objectType,
-                                                                  objectSpace->getRepository().size());
+    auto methods           = NeighborhoodGraph::Search::getMethods(prop.distanceType, prop.objectType,
+                                                                   objectSpace->getRepository().size());
+    searchUnupdatableGraph = methods.plain;
+    searchUnupdatableGraphFiltered = methods.filtered;
   }
 #endif
 }
