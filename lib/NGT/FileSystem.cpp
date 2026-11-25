@@ -18,7 +18,8 @@ void NGT::FileSystem::copyDirectory(const std::string &source, const std::string
   fs::copy(source, destination, fs::copy_options::recursive, ec);
   if (ec) {
     std::stringstream msg;
-    msg << "FileSystem::copyDirectory: Cannot copy " << source << " to " << destination << ". " << ec.message();
+    msg << "FileSystem::copyDirectory: Cannot copy " << source << " to " << destination << ". "
+        << ec.message();
     NGTThrowException(msg);
   }
 }
@@ -62,7 +63,8 @@ std::string NGT::FileSystem::createTemporaryDirectory(const std::string &prefix)
       if (ec) {
         fs::remove(dir, ec);
         std::stringstream msg;
-        msg << "FileSystem::createTemporaryDirectory: Cannot restrict the permissions of " << dir.string() << ".";
+        msg << "FileSystem::createTemporaryDirectory: Cannot restrict the permissions of " << dir.string()
+            << ".";
         NGTThrowException(msg);
       }
       return dir.string();

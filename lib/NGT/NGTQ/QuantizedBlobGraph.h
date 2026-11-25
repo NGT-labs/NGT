@@ -1112,11 +1112,12 @@ class Index : public NGTQ::Index {
 #endif
   }
 
-  template <typename T>
+  template <bool FILTERED = false, typename T>
   std::tuple<NGT::Distance, NGT::Distance> judge(NGTQG::QuantizedNode &ivi, size_t k, NGT::Distance radius,
                                                  NGTQ::QuantizedObjectDistance::DistanceLookupTableUint8 &lut,
                                                  T &result, size_t &foundCount, void *query = 0,
-                                                 std::unique_ptr<NGTQ::BooleanSet> *checkedIDs = 0) {
+                                                 std::unique_ptr<NGTQ::BooleanSet> *checkedIDs = 0,
+                                                 const NGT::FilterBitmapView *filter           = nullptr) {
     auto noOfObjects              = ivi.nOfObjects;
     auto &quantizedObjectDistance = getQuantizer().getQuantizedObjectDistance();
     std::vector<float> distances(quantizedObjectDistance.getNumOfAlignedObjects(noOfObjects));
@@ -1143,6 +1144,11 @@ class Index : public NGTQ::Index {
     bool found = false;
     for (size_t i = 0; i < noOfObjects; i++) {
       if (distances[i] <= radius) {
+        if constexpr (FILTERED) {
+          if (!filter->test(ivi.ids[i])) {
+            continue;
+          }
+        }
         result.push(NGT::ObjectDistance(ivi.ids[i], distances[i]));
         found = true;
         if (result.size() > k) {
@@ -1268,7 +1274,18 @@ class Index : public NGTQ::Index {
     NGTThrowException("Not implemented yet.");
   }
 
-  void searchInTwoSteps(QBG::SearchContainer &searchContainer) {
+  void searchInTwoSteps(QBG::SearchContainer &searchContainer,
+                        const NGT::FilterBitmapView *filter = nullptr) {
+    if (filter != nullptr && filter->allowedCount() == 0) {
+      if (searchContainer.resultIsAvailable()) {
+        searchContainer.getResult().clear();
+      } else {
+        while (!searchContainer.workingResult.empty()) {
+          searchContainer.workingResult.pop();
+        }
+      }
+      return;
+    }
     auto parameterSize            = searchContainer.size;
     auto parameterExactResultSize = searchContainer.size;
     if (searchContainer.refinementExpansion >= 1.0) {
@@ -1379,8 +1396,13 @@ class Index : public NGTQ::Index {
         NGTQ::QuantizedObjectDistance::DistanceLookupTableUint8 &lut = (*luti).second;
 #endif
         NGT::Distance bd;
-        std::tie(bd, radius) = judge(quantizedBlobGraph[blobID], k, radius, lut, result, foundCount,
-                                     selectiveQuery, &checkedIDs);
+        if (filter == nullptr) {
+          std::tie(bd, radius) = judge(quantizedBlobGraph[blobID], k, radius, lut, result, foundCount,
+                                       selectiveQuery, &checkedIDs);
+        } else {
+          std::tie(bd, radius) = judge<true>(quantizedBlobGraph[blobID], k, radius, lut, result, foundCount,
+                                             selectiveQuery, &checkedIDs, filter);
+        }
 #ifdef NGTQBG_COARSE_BLOB
         if (bd < blobDistance) {
           blobDistance = bd;
@@ -1408,6 +1430,10 @@ class Index : public NGTQ::Index {
     }
     deleteObject(query);
   } // namespace QBG
+
+  void searchInTwoSteps(QBG::SearchContainer &searchContainer, const NGT::FilterBitmapView &filter) {
+    searchInTwoSteps(searchContainer, &filter);
+  }
 
   void searchInOneStep(QBG::SearchContainer &searchContainer) {
     auto &globalIndex = getQuantizer().globalCodebookIndex;
@@ -2098,7 +2124,8 @@ class Index : public NGTQ::Index {
       {
         if (access(QBG::Index::getBlobFile(indexPath).c_str(), F_OK) == 0) {
           try {
-            NGT::FileSystem::copyFile(QBG::Index::getBlobFile(indexPath), QBG::Index::getStoredBlobFile(indexPath));
+            NGT::FileSystem::copyFile(QBG::Index::getBlobFile(indexPath),
+                                      QBG::Index::getStoredBlobFile(indexPath));
           } catch (NGT::Exception &err) {
             std::cerr << "Warning. Cannot cp the blob. " << err.what() << std::endl;
           }

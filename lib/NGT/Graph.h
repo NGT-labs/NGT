@@ -316,155 +316,37 @@ class NeighborhoodGraph {
 #ifdef NGT_GRAPH_READ_ONLY_GRAPH
   class Search {
    public:
-    static void (*getMethod(NGT::ObjectSpace::DistanceType dtype, NGT::ObjectSpace::ObjectType otype,
-                            size_t size))(NGT::NeighborhoodGraph &, NGT::SearchContainer &,
-                                          NGT::ObjectDistances &) {
-      if (size < 5000000) {
-        switch (otype) {
-        case NGT::ObjectSpace::ObjectTypeUnset:
-        case NGT::ObjectSpace::Float:
-          switch (dtype) {
-          case NGT::ObjectSpace::DistanceTypeNormalizedCosine: return normalizedCosineSimilarityFloat;
-          case NGT::ObjectSpace::DistanceTypeCosine: return cosineSimilarityFloat;
-          case NGT::ObjectSpace::DistanceTypeNormalizedAngle: return normalizedAngleFloat;
-          case NGT::ObjectSpace::DistanceTypeAngle: return angleFloat;
-          case NGT::ObjectSpace::DistanceTypeNormalizedL2: return normalizedL2Float;
-          case NGT::ObjectSpace::DistanceTypeL2: return l2Float;
-          case NGT::ObjectSpace::DistanceTypeL1: return l1Float;
-          case NGT::ObjectSpace::DistanceTypeSparseJaccard: return sparseJaccardFloat;
-          case NGT::ObjectSpace::DistanceTypePoincare: return poincareFloat; // added by Nyapicom
-          case NGT::ObjectSpace::DistanceTypeLorentz: return lorentzFloat;   // added by Nyapicom
-          default: return l2Float;
-          }
-          break;
-        case NGT::ObjectSpace::Uint8:
-          switch (dtype) {
-          case NGT::ObjectSpace::DistanceTypeHamming: return hammingUint8;
-          case NGT::ObjectSpace::DistanceTypeJaccard: return jaccardUint8;
-          case NGT::ObjectSpace::DistanceTypeL2: return l2Uint8;
-          case NGT::ObjectSpace::DistanceTypeL1: return l1Uint8;
-          default: return l2Uint8;
-          }
-          break;
-#ifdef NGT_HALF_FLOAT
-        case NGT::ObjectSpace::Float16:
-          switch (dtype) {
-          case NGT::ObjectSpace::DistanceTypeNormalizedCosine: return normalizedCosineSimilarityFloat16;
-          case NGT::ObjectSpace::DistanceTypeCosine: return cosineSimilarityFloat16;
-          case NGT::ObjectSpace::DistanceTypeNormalizedAngle: return normalizedAngleFloat16;
-          case NGT::ObjectSpace::DistanceTypeAngle: return angleFloat16;
-          case NGT::ObjectSpace::DistanceTypeNormalizedL2: return normalizedL2Float16;
-          case NGT::ObjectSpace::DistanceTypeL2: return l2Float16;
-          case NGT::ObjectSpace::DistanceTypeL1: return l1Float16;
-          case NGT::ObjectSpace::DistanceTypeSparseJaccard: return sparseJaccardFloat16;
-          case NGT::ObjectSpace::DistanceTypePoincare: return poincareFloat16; // added by Nyapicom
-          case NGT::ObjectSpace::DistanceTypeLorentz: return lorentzFloat16;   // added by Nyapicom
-          default: return l2Float16;
-          }
-          break;
-#endif
-        case NGT::ObjectSpace::Qsuint8:
-          switch (dtype) {
-          case NGT::ObjectSpace::DistanceTypeL2: return l2Qsint8;
-          case NGT::ObjectSpace::DistanceTypeInnerProduct: return innerProductQsint8;
-          case NGT::ObjectSpace::DistanceTypeNormalizedCosine: return normalizedCosineSimilarityQsint8;
-          default: return l2Qsint8;
-          }
-          break;
-#ifdef NGT_PQ4
-        case NGT::ObjectSpace::Qint4:
-          switch (dtype) {
-          case NGT::ObjectSpace::DistanceTypeL2: return l2Qint4;
-          case NGT::ObjectSpace::DistanceTypeCosine: return cosineSimilarityQint4;
-          case NGT::ObjectSpace::DistanceTypeInnerProduct: return innerProductQint4;
-          case NGT::ObjectSpace::DistanceTypeNormalizedCosine: return normalizedCosineSimilarityQint4;
-          default: return l2Qint4;
-          }
-          break;
-#endif
-        default: {
-          std::stringstream msg;
-          msg << "NGT::Graph::Search: Not supported object type. " << otype;
-          NGTThrowException(msg);
-          break;
-        }
-        }
-        return l1Uint8;
-      } else {
-        switch (otype) {
-        case NGT::ObjectSpace::Float:
-          switch (dtype) {
-          case NGT::ObjectSpace::DistanceTypeNormalizedCosine:
-            return normalizedCosineSimilarityFloatForLargeDataset;
-          case NGT::ObjectSpace::DistanceTypeCosine: return cosineSimilarityFloatForLargeDataset;
-          case NGT::ObjectSpace::DistanceTypeNormalizedAngle: return normalizedAngleFloatForLargeDataset;
-          case NGT::ObjectSpace::DistanceTypeAngle: return angleFloatForLargeDataset;
-          case NGT::ObjectSpace::DistanceTypeNormalizedL2: return normalizedL2FloatForLargeDataset;
-          case NGT::ObjectSpace::DistanceTypeL2: return l2FloatForLargeDataset;
-          case NGT::ObjectSpace::DistanceTypeL1: return l1FloatForLargeDataset;
-          case NGT::ObjectSpace::DistanceTypeSparseJaccard: return sparseJaccardFloatForLargeDataset;
-          case NGT::ObjectSpace::DistanceTypePoincare: return poincareFloatForLargeDataset;
-          case NGT::ObjectSpace::DistanceTypeLorentz: return lorentzFloatForLargeDataset;
-          default: return l2FloatForLargeDataset;
-          }
-          break;
-        case NGT::ObjectSpace::Uint8:
-          switch (dtype) {
-          case NGT::ObjectSpace::DistanceTypeHamming: return hammingUint8ForLargeDataset;
-          case NGT::ObjectSpace::DistanceTypeJaccard: return jaccardUint8ForLargeDataset;
-          case NGT::ObjectSpace::DistanceTypeL2: return l2Uint8ForLargeDataset;
-          case NGT::ObjectSpace::DistanceTypeL1: return l1Uint8ForLargeDataset;
-          default: return l2Uint8ForLargeDataset;
-          }
-          break;
-#ifdef NGT_HALF_FLOAT
-        case NGT::ObjectSpace::Float16:
-          switch (dtype) {
-          case NGT::ObjectSpace::DistanceTypeNormalizedCosine:
-            return normalizedCosineSimilarityFloat16ForLargeDataset;
-          case NGT::ObjectSpace::DistanceTypeCosine: return cosineSimilarityFloat16ForLargeDataset;
-          case NGT::ObjectSpace::DistanceTypeNormalizedAngle: return normalizedAngleFloat16ForLargeDataset;
-          case NGT::ObjectSpace::DistanceTypeAngle: return angleFloat16ForLargeDataset;
-          case NGT::ObjectSpace::DistanceTypeNormalizedL2: return normalizedL2Float16ForLargeDataset;
-          case NGT::ObjectSpace::DistanceTypeL2: return l2Float16ForLargeDataset;
-          case NGT::ObjectSpace::DistanceTypeL1: return l1Float16ForLargeDataset;
-          case NGT::ObjectSpace::DistanceTypeSparseJaccard: return sparseJaccardFloat16ForLargeDataset;
-          case NGT::ObjectSpace::DistanceTypePoincare: return poincareFloat16ForLargeDataset;
-          case NGT::ObjectSpace::DistanceTypeLorentz: return lorentzFloat16ForLargeDataset;
-          default: return l2Float16ForLargeDataset;
-          }
-#endif
-        case NGT::ObjectSpace::Qsuint8:
-          switch (dtype) {
-          case NGT::ObjectSpace::DistanceTypeL2: return l2Qsint8ForLargeDataset;
-          case NGT::ObjectSpace::DistanceTypeInnerProduct: return innerProductQsint8ForLargeDataset;
-          case NGT::ObjectSpace::DistanceTypeNormalizedCosine:
-            return normalizedCosineSimilarityQsint8ForLargeDataset;
-          default: return l2Qsint8ForLargeDataset;
-          }
-          break;
-#ifdef NGT_PQ4
-        case NGT::ObjectSpace::Qint4:
-          switch (dtype) {
-          case NGT::ObjectSpace::DistanceTypeL2: return l2Qint4ForLargeDataset;
-          case NGT::ObjectSpace::DistanceTypeCosine: return cosineSimilarityQint4ForLargeDataset;
-          case NGT::ObjectSpace::DistanceTypeInnerProduct: return innerProductQint4ForLargeDataset;
-          case NGT::ObjectSpace::DistanceTypeNormalizedCosine:
-            return normalizedCosineSimilarityQint4ForLargeDataset;
-          default: return l2Qint4;
-          }
-          break;
-#endif
-        default: {
-          std::stringstream msg;
-          msg << "NGT::Graph::Search: Not supported object type. " << otype;
-          NGTThrowException(msg);
-          break;
-        }
-        }
-        return l1Uint8ForLargeDataset;
-      }
+    using Method         = void (*)(NGT::NeighborhoodGraph &, NGT::SearchContainer &, NGT::ObjectDistances &);
+    using FilteredMethod = void (*)(NGT::NeighborhoodGraph &, NGT::SearchContainer &, NGT::ObjectDistances &,
+                                    const NGT::FilterBitmapView &);
+    struct Methods {
+      Method plain;
+      FilteredMethod filtered;
+    };
+
+    template <typename COMPARATOR, typename CHECK_LIST>
+    static void runFiltered(NGT::NeighborhoodGraph &graph, NGT::SearchContainer &sc,
+                            NGT::ObjectDistances &seeds, const NGT::FilterBitmapView &filter) {
+      graph.searchReadOnlyGraph<COMPARATOR, CHECK_LIST>(sc, seeds, filter);
     }
+
+    template <typename COMPARATOR, typename CHECK_LIST> static Methods makeMethods(Method plain) {
+#if defined(NGT_GRAPH_COMPACT_READ_ONLY_GRAPH) || defined(NGT_GRAPH_BETTER_FIRST_RESTORE_READ_ONLY) ||       \
+    defined(NGT_SEARCH_AVX) || defined(NGT_SEARCH_AVX_32) || defined(NGT_SEARCH_AGGREGATION)
+      return {plain, nullptr};
+#else
+      return {plain, runFiltered<COMPARATOR, CHECK_LIST>};
+#endif
+    }
+
+    static Method getMethod(NGT::ObjectSpace::DistanceType dtype, NGT::ObjectSpace::ObjectType otype,
+                            size_t size) {
+      return getMethods(dtype, otype, size).plain;
+    }
+
+    static Methods getMethods(NGT::ObjectSpace::DistanceType dtype, NGT::ObjectSpace::ObjectType otype,
+                              size_t size);
+
     static void l1Uint8(NeighborhoodGraph &graph, NGT::SearchContainer &sc, ObjectDistances &seeds);
     static void l2Uint8(NeighborhoodGraph &graph, NGT::SearchContainer &sc, ObjectDistances &seeds);
     static void l1Float(NeighborhoodGraph &graph, NGT::SearchContainer &sc, ObjectDistances &seeds);
@@ -1298,6 +1180,11 @@ class NeighborhoodGraph {
 #ifdef NGT_GRAPH_READ_ONLY_GRAPH
   template <typename COMPARATOR, typename CHECK_LIST>
   void searchReadOnlyGraph(NGT::SearchContainer &sc, ObjectDistances &seeds);
+  template <typename COMPARATOR, typename CHECK_LIST>
+  void searchReadOnlyGraph(NGT::SearchContainer &sc, ObjectDistances &seeds, const FilterBitmapView &filter);
+  template <typename COMPARATOR, typename CHECK_LIST, bool FILTERED>
+  void searchReadOnlyGraphImpl(NGT::SearchContainer &sc, ObjectDistances &seeds,
+                               const FilterBitmapView *filter);
 #endif
 
   void removeEdge(ObjectID fid, ObjectID rmid) {
@@ -1411,6 +1298,13 @@ class DistanceCheckedSet : public unordered_set<ObjectID> {
 #if !defined(NGT_GRAPH_CHECK_HASH_BASED_BOOLEAN_SET)
   void setupSeeds(SearchContainer &sc, ObjectDistances &seeds, ResultSet &results, UncheckedSet &unchecked,
                   DistanceCheckedSetForLargeDataset &distanceChecked);
+#endif
+
+#ifdef NGT_GRAPH_READ_ONLY_GRAPH
+  template <typename CHECK_LIST>
+  void setupFilteredSeeds(NGT::SearchContainer &sc, ObjectDistances &seeds, ResultSet &results,
+                          UncheckedSet &unchecked, CHECK_LIST &distanceChecked,
+                          const FilterBitmapView &filter);
 #endif
 
   int getEdgeSize() { return property.edgeSizeForCreation; }

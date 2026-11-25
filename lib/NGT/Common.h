@@ -40,6 +40,8 @@
 #include <type_traits>
 #include <limits>
 #include <random>
+#include <cstdint>
+#include <stdexcept>
 
 #ifndef _WIN32
 #include <execinfo.h>
@@ -70,6 +72,54 @@
 namespace NGT {
 typedef unsigned int ObjectID;
 typedef float Distance;
+
+// Non-owning view of an immutable bitmap of permitted object IDs. The backing words must
+// remain available and unchanged for the duration of a filtered search.
+class FilterBitmapView {
+ public:
+  FilterBitmapView(uint64_t begin, uint64_t end, const uint64_t *words, size_t wordCount)
+      : begin_(begin), end_(end), words_(words), wordCount_(wordCount) {
+    if (begin == 0 || end < begin || end > static_cast<uint64_t>(std::numeric_limits<ObjectID>::max()) + 1) {
+      throw std::invalid_argument("FilterBitmapView: invalid bitmap range");
+    }
+    auto bitCount = end - begin;
+    if (wordCount != bitCount / 64 + (bitCount % 64 != 0) || (bitCount != 0 && words == nullptr)) {
+      throw std::invalid_argument("FilterBitmapView: invalid bitmap storage");
+    }
+  }
+
+  bool test(ObjectID id) const noexcept {
+    if (id < begin_ || id >= end_) {
+      return false;
+    }
+    auto offset = static_cast<size_t>(id - begin_);
+    return (words_[offset >> 6] & (uint64_t{1} << (offset & 63))) != 0;
+  }
+
+  // Count only bits inside [begin, end); bits beyond end in the last word are ignored.
+  size_t allowedCount() const noexcept {
+    size_t count  = 0;
+    auto lastBits = (end_ - begin_) & 63;
+    for (size_t i = 0; i < wordCount_; ++i) {
+      uint64_t word = words_[i];
+      if (i + 1 == wordCount_ && lastBits != 0) {
+        word &= (uint64_t{1} << lastBits) - 1;
+      }
+      while (word != 0) {
+        word &= word - 1;
+        count++;
+      }
+    }
+    return count;
+  }
+
+ private:
+  uint64_t begin_;
+  uint64_t end_;
+  const uint64_t *words_;
+  size_t wordCount_;
+};
+
 #ifdef NGT_HALF_FLOAT
 typedef half_float::half float16;
 #endif

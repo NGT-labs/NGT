@@ -671,6 +671,9 @@ class Index {
   virtual void linearSearch(NGT::SearchContainer &sc) { getIndex().linearSearch(sc); }
   virtual void linearSearch(NGT::SearchQuery &sc) { getIndex().linearSearch(sc); }
   virtual void search(NGT::SearchContainer &sc) { getIndex().search(sc); }
+  virtual void search(NGT::SearchContainer &sc, const FilterBitmapView &filter) {
+    getIndex().search(sc, filter);
+  }
   virtual void search(NGT::SearchQuery &sc) { getIndex().search(sc); }
   virtual void search(NGT::SearchContainer &sc, ObjectDistances &seeds) { getIndex().search(sc, seeds); }
   virtual void getSeeds(NGT::SearchContainer &sc, ObjectDistances &seeds, size_t n) {
@@ -1170,6 +1173,39 @@ class GraphIndex : public Index, public NeighborhoodGraph {
     sc.visitCount               = 0;
     ObjectDistances seeds;
     search(sc, seeds);
+  }
+
+  void search(NGT::SearchContainer &sc, const FilterBitmapView &filter) override {
+    sc.distanceComputationCount = 0;
+    sc.visitCount               = 0;
+    ObjectDistances seeds;
+    search(sc, seeds, filter);
+  }
+
+  void search(NGT::SearchContainer &sc, ObjectDistances &seeds, const FilterBitmapView &filter) {
+    if (!readOnly) {
+      NGTThrowException("Filtered graph search requires a read-only index.");
+    }
+#if defined(NGT_SHARED_MEMORY_ALLOCATOR) || !defined(NGT_GRAPH_READ_ONLY_GRAPH)
+    NGTThrowException("Filtered graph search is not supported in this build configuration.");
+#else
+    if (searchUnupdatableGraphFiltered == nullptr) {
+      NGTThrowException("Filtered graph search is not supported in this build configuration.");
+    }
+    if (sc.size == 0) {
+      while (!sc.workingResult.empty()) {
+        sc.workingResult.pop();
+      }
+      return;
+    }
+    if (seeds.empty()) {
+      getSeedsFromGraph(searchRepository, seeds);
+    }
+    if (sc.expectedAccuracy > 0.0) {
+      sc.setEpsilon(getEpsilonFromExpectedAccuracy(sc.expectedAccuracy));
+    }
+    (*searchUnupdatableGraphFiltered)(*this, sc, seeds, filter);
+#endif
   }
 
   // GraphIndex
@@ -1763,6 +1799,7 @@ class GraphIndex : public Index, public NeighborhoodGraph {
   bool readOnly;
 #ifdef NGT_GRAPH_READ_ONLY_GRAPH
   void (*searchUnupdatableGraph)(NGT::NeighborhoodGraph &, NGT::SearchContainer &, NGT::ObjectDistances &);
+  NeighborhoodGraph::Search::FilteredMethod searchUnupdatableGraphFiltered = nullptr;
 #endif
 
   Index::AccuracyTable accuracyTable;
@@ -2304,6 +2341,18 @@ class GraphAndTreeIndex : public GraphIndex, public DVPTree {
     getSeedsFromTree(sc, seeds);
     sc.visitCount = sc.distanceComputationCount;
     GraphIndex::search(sc, seeds);
+  }
+
+  void search(NGT::SearchContainer &sc, const FilterBitmapView &filter) override {
+    if (!readOnly) {
+      NGTThrowException("Filtered graph search requires a read-only index.");
+    }
+    sc.distanceComputationCount = 0;
+    sc.visitCount               = 0;
+    ObjectDistances seeds;
+    getSeedsFromTree(sc, seeds);
+    sc.visitCount = sc.distanceComputationCount;
+    GraphIndex::search(sc, seeds, filter);
   }
 
   // GraphAndTreeIndex
