@@ -48,10 +48,11 @@ class Property;
 class Index {
  public:
   enum OpenType {
-    OpenTypeNone           = 0x00,
-    OpenTypeGraphDisabled  = 0x01,
-    OpenTypeTreeDisabled   = 0x02,
-    OpenTypeObjectDisabled = 0x04
+    OpenTypeNone                 = 0x00,
+    OpenTypeGraphDisabled        = 0x01,
+    OpenTypeTreeDisabled         = 0x02,
+    OpenTypeObjectDisabled       = 0x04,
+    OpenTypeIncomingEdgesEnabled = 0x08
   };
 
   class Property {
@@ -957,7 +958,8 @@ class GraphIndex : public Index, public NeighborhoodGraph {
   };
 
 #ifdef NGT_SHARED_MEMORY_ALLOCATOR
-  GraphIndex(const std::string &allocator, bool rdOnly = false);
+  GraphIndex(const std::string &allocator, bool rdOnly = false,
+             Index::OpenType openType = Index::OpenTypeNone);
   GraphIndex(const std::string &allocator, NGT::Property &prop) : readOnly(false) {
     initialize(allocator, prop);
   }
@@ -1808,8 +1810,9 @@ class GraphIndex : public Index, public NeighborhoodGraph {
 class GraphAndTreeIndex : public GraphIndex, public DVPTree {
  public:
 #ifdef NGT_SHARED_MEMORY_ALLOCATOR
-  GraphAndTreeIndex(const std::string &allocator, NGT::Property &prop, bool rdOnly)
-      : GraphIndex(allocator, rdOnly), DVPTree(prop) {
+  GraphAndTreeIndex(const std::string &allocator, NGT::Property &prop, bool rdOnly,
+                    NGT::Index::OpenType openType = NGT::Index::OpenTypeNone)
+      : GraphIndex(allocator, rdOnly, openType), DVPTree(prop) {
     initialize(allocator, 0);
   }
   GraphAndTreeIndex(const std::string &allocator, NGT::Property &prop);
@@ -1818,8 +1821,9 @@ class GraphAndTreeIndex : public GraphIndex, public DVPTree {
     DVPTree::open(allocator + "/tre", sharedMemorySize);
   }
 #else
-  GraphAndTreeIndex(const std::string &database, NGT::Property &prop, bool rdOnly = false)
-      : GraphIndex(database, rdOnly), DVPTree(prop) {
+  GraphAndTreeIndex(const std::string &database, NGT::Property &prop, bool rdOnly = false,
+                    NGT::Index::OpenType openType = NGT::Index::OpenTypeNone)
+      : GraphIndex(database, rdOnly, openType), DVPTree(prop) {
     GraphAndTreeIndex::loadIndex(database, rdOnly);
   }
 
