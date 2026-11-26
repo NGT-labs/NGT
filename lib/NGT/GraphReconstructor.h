@@ -649,6 +649,7 @@ class GraphReconstructor {
   static void reconstructGraph(std::vector<NGT::ObjectDistances> &graph, NGT::GraphIndex &outGraph,
                                size_t originalEdgeSize, size_t reverseEdgeSize,
                                int64_t maxNoOfEdges = std::numeric_limits<int64_t>::max()) {
+    outGraph.invalidateIncomingEdges();
     std::cerr << "GraphReconstructor::reconstructGraph:" << originalEdgeSize << ":" << reverseEdgeSize << ":"
               << maxNoOfEdges << std::endl;
     if (reverseEdgeSize > 10000) {
@@ -819,6 +820,7 @@ class GraphReconstructor {
   static void reconstructGraphWithConstraint(std::vector<NGT::ObjectDistances> &graph,
                                              NGT::GraphIndex &outGraph, size_t originalEdgeSize,
                                              size_t reverseEdgeSize, char mode = 'a') {
+    outGraph.invalidateIncomingEdges();
 #if defined(NGT_SHARED_MEMORY_ALLOCATOR)
     std::cerr << "reconstructGraphWithConstraint is not implemented." << std::endl;
     abort();

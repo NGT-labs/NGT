@@ -714,7 +714,11 @@ class NeighborhoodGraph {
     float searchTraceRatio;
   };
 
-  NeighborhoodGraph() : objectSpace(0) {
+  enum IncomingEdgesState { IncomingEdgesUninitialized = 0, IncomingEdgesValid, IncomingEdgesInvalid };
+  IncomingEdgesState incomingEdgesState;
+  std::vector<std::vector<ObjectID>> incomingEdges;
+
+  NeighborhoodGraph() : incomingEdgesState(IncomingEdgesUninitialized), objectSpace(0) {
     property.truncationThreshold = NGT_TRUNCATION_THRESHOLD;
     // initialize random to generate random seeds
 #ifdef NGT_ENABLE_TIME_SEED_FOR_RANDOM
@@ -723,6 +727,93 @@ class NeighborhoodGraph {
     srand(randTime.tv_usec);
 #endif
   }
+
+  bool isDirectedGraphType() const {
+    switch (property.graphType) {
+    case GraphTypeKNNG:
+    case GraphTypeONNG:
+    case GraphTypeIANNG:
+    case GraphTypeRIANNG:
+    case GraphTypeDNNG:
+    case GraphTypeSNNG: return true;
+    case GraphTypeANNG: return property.identicalObjectEdgeType == IdenticalObjectEdgeTypeDirectedEdge;
+    default: return false;
+    }
+  }
+
+  void buildIncomingEdgesIfNecessary() {
+    if (!isDirectedGraphType()) return;
+    if (incomingEdgesState == IncomingEdgesValid) return;
+    buildIncomingEdges();
+  }
+
+  void invalidateIncomingEdges() {
+    if (incomingEdgesState != IncomingEdgesValid) return;
+    for (auto &edges : incomingEdges) {
+      std::vector<ObjectID>().swap(edges);
+    }
+    incomingEdges.clear();
+    incomingEdgesState = IncomingEdgesInvalid;
+  }
+
+  bool hasEdge(ObjectID nid, ObjectID eid) {
+    if (repository.isEmpty(nid)) return false;
+    GraphNode &node = *getNode(nid);
+#if defined(NGT_SHARED_MEMORY_ALLOCATOR)
+    for (GraphNode::iterator i = node.begin(repository.allocator); i != node.end(repository.allocator); ++i) {
+      if ((*i).id == eid) return true;
+    }
+#else
+    for (GraphNode::iterator i = node.begin(); i != node.end(); ++i) {
+      if ((*i).id == eid) return true;
+    }
+#endif
+    return false;
+  }
+
+  void recordOneSidedEdge(ObjectID s, ObjectID t) {
+    if (incomingEdgesState != IncomingEdgesValid) return;
+    if (hasEdge(t, s)) return;
+    if (incomingEdges.size() <= t) {
+      incomingEdges.resize(t + 1);
+    }
+    auto &edges = incomingEdges[t];
+    if (std::find(edges.begin(), edges.end(), s) == edges.end()) {
+      edges.push_back(s);
+    }
+  }
+
+  void removeOneSidedEdgeRecord(ObjectID t, ObjectID s) {
+    if (incomingEdgesState != IncomingEdgesValid) return;
+    if (incomingEdges.size() <= t) return;
+    auto &edges = incomingEdges[t];
+    auto i      = std::find(edges.begin(), edges.end(), s);
+    if (i != edges.end()) {
+      edges.erase(i);
+    }
+  }
+
+  void removeEdgeFromNodeById(ObjectID nid, ObjectID eid) {
+    if (repository.isEmpty(nid)) return;
+    GraphNode &node = *getNode(nid);
+#if defined(NGT_SHARED_MEMORY_ALLOCATOR)
+    for (GraphNode::iterator i = node.begin(repository.allocator); i != node.end(repository.allocator); ++i) {
+      if ((*i).id == eid) {
+        node.erase(i, repository.allocator);
+        return;
+      }
+    }
+#else
+    for (GraphNode::iterator i = node.begin(); i != node.end(); ++i) {
+      if ((*i).id == eid) {
+        node.erase(i);
+        return;
+      }
+    }
+#endif
+  }
+
+  void buildIncomingEdges();
 
   inline GraphNode *getNode(ObjectID fid, size_t &minsize) { return repository.get(fid, minsize); }
   inline GraphNode *getNode(ObjectID fid) { return repository.VECTOR::get(fid); }
@@ -737,9 +828,15 @@ class NeighborhoodGraph {
       break;
     case GraphTypeRANNG: insertANNGNode(id, objects); break;
     case GraphTypeIANNG:
-    case GraphTypeRIANNG: insertIANNGNode(id, objects); break;
+    case GraphTypeRIANNG:
+      insertIANNGNode(id, objects);
+      invalidateIncomingEdges();
+      break;
     case GraphTypeONNG: insertONNGNode(id, objects); break;
-    case GraphTypeSNNG: insertSNNGNode(id, objects); break;
+    case GraphTypeSNNG:
+      insertSNNGNode(id, objects);
+      invalidateIncomingEdges();
+      break;
     case GraphTypeKNNG: insertKNNGNode(id, objects); break;
     case GraphTypeBKNNG: insertBKNNGNode(id, objects); break;
     case GraphTypeNone: NGTThrowException("NGT::insertNode: GraphType is not specified."); break;
@@ -790,7 +887,12 @@ class NeighborhoodGraph {
     return;
   }
 
-  void insertKNNGNode(ObjectID id, ObjectDistances &results) { repository.insert(id, results); }
+  void insertKNNGNode(ObjectID id, ObjectDistances &results) {
+    repository.insert(id, results);
+    for (ObjectDistances::iterator ri = results.begin(); ri != results.end(); ri++) {
+      recordOneSidedEdge(id, (*ri).id);
+    }
+  }
 
   void insertANNGNode(ObjectID id, ObjectDistances &results) {
     repository.insert(id, results);
@@ -912,6 +1014,8 @@ class NeighborhoodGraph {
     }
     repository.insert(id, edges);
     addEdge(maxid, id, 0.0);
+    recordOneSidedEdge(maxid, id);
+    recordOneSidedEdge(id, maxid);
     return;
   }
   void insertIANNGNode(ObjectID id, ObjectDistances &results) {
@@ -1015,10 +1119,21 @@ class NeighborhoodGraph {
       }
       addEdge((*ri).id, id, (*ri).distance);
     }
+    std::vector<ObjectID> incomingCandidates;
+    for (int c = property.outgoingEdge; c < property.incomingEdge && c < static_cast<int>(results.size());
+         c++) {
+      incomingCandidates.push_back(results[c].id);
+    }
     if (static_cast<int>(results.size()) > property.outgoingEdge) {
       results.resize(property.outgoingEdge);
     }
     repository.insert(id, results);
+    for (auto r : incomingCandidates) {
+      recordOneSidedEdge(r, id);
+    }
+    for (ObjectDistances::iterator ri = results.begin(); ri != results.end(); ri++) {
+      recordOneSidedEdge(id, (*ri).id);
+    }
   }
   void insertSNNGNode(ObjectID id, ObjectDistances &results) {
     auto &objectSpace = getObjectSpace();
@@ -1188,6 +1303,7 @@ class NeighborhoodGraph {
 #endif
 
   void removeEdge(ObjectID fid, ObjectID rmid) {
+    invalidateIncomingEdges();
     GraphNode &rs = *getNode(fid);
 #ifdef NGT_SHARED_MEMORY_ALLOCATOR
     for (GraphNode::iterator ri = rs.begin(repository.allocator); ri != rs.end(repository.allocator); ri++) {
@@ -1207,6 +1323,7 @@ class NeighborhoodGraph {
   }
 
   void removeEdge(GraphNode &node, ObjectDistance &edge) {
+    invalidateIncomingEdges();
 #if defined(NGT_SHARED_MEMORY_ALLOCATOR)
     GraphNode::iterator ni =
         std::lower_bound(node.begin(repository.allocator), node.end(repository.allocator), edge);

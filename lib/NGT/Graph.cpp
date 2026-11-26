@@ -15,6 +15,9 @@
 // limitations under the License.
 //
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 #include "defines.h"
 #include "Graph.h"
 #include "Thread.h"
@@ -1521,8 +1524,18 @@ void NeighborhoodGraph::removeEdgesReliably(ObjectID id) {
     NGTThrowException(msg.str());
   }
   GraphNode &node = *nodetmp;
+  if (isDirectedGraphType() && incomingEdgesState != IncomingEdgesValid) {
+    buildIncomingEdges();
+  }
+  const bool useIncomingEdges = incomingEdgesState == IncomingEdgesValid;
   if (node.size() == 0) {
     cerr << "removeEdgesReliably : Warning! : No edges. ID=" << id << endl;
+    if (useIncomingEdges && incomingEdges.size() > id) {
+      for (auto s : incomingEdges[id]) {
+        removeEdgeFromNodeById(s, id);
+      }
+      std::vector<ObjectID>().swap(incomingEdges[id]);
+    }
     try {
       removeNode(id);
     } catch (Exception &err) {
@@ -1551,6 +1564,9 @@ void NeighborhoodGraph::removeEdgesReliably(ObjectID id) {
         i = node.erase(i);
 #endif
         continue;
+      }
+      if (useIncomingEdges) {
+        removeOneSidedEdgeRecord((*i).id, id);
       }
       objtbl.push_back(getObjectRepository().get((*i).id));
       GraphNode *n = 0;
@@ -1583,26 +1599,35 @@ void NeighborhoodGraph::removeEdgesReliably(ObjectID id) {
           n->erase(ei);
 #endif
         } else {
-          stringstream msg;
-          msg << "removeEdgesReliably : internal error : cannot find an edge. ID=" << id
-              << " d=" << edge.distance << " in " << (*i).id << endl;
+          if (!useIncomingEdges) {
+            stringstream msg;
+            msg << "removeEdgesReliably : internal error : cannot find an edge. ID=" << id
+                << " d=" << edge.distance << " in " << (*i).id << endl;
 #if defined(NGT_SHARED_MEMORY_ALLOCATOR)
-          for (GraphNode::iterator ni = n->begin(repository.allocator); ni != n->end(repository.allocator);
-               ni++) {
+            for (GraphNode::iterator ni = n->begin(repository.allocator); ni != n->end(repository.allocator);
+                 ni++) {
 #else
-          for (GraphNode::iterator ni = n->begin(); ni != n->end(); ni++) {
+            for (GraphNode::iterator ni = n->begin(); ni != n->end(); ni++) {
 #endif
-            msg << "check. " << (*ni).id << endl;
-          }
+              msg << "check. " << (*ni).id << endl;
+            }
 #ifdef NGT_FORCED_REMOVE
-          msg << " anyway continue...";
-          cerr << msg.str() << endl;
+            msg << " anyway continue...";
+            cerr << msg.str() << endl;
 #else
-          NGTThrowException(msg.str());
+            NGTThrowException(msg.str());
 #endif
+          } else {
+          }
         }
       }
       i++;
+    }
+    if (useIncomingEdges && incomingEdges.size() > id) {
+      for (auto s : incomingEdges[id]) {
+        removeEdgeFromNodeById(s, id);
+      }
+      std::vector<ObjectID>().swap(incomingEdges[id]);
     }
     for (unsigned int i = 0; i < node.size() - 1; i++) {
 #if defined(NGT_SHARED_MEMORY_ALLOCATOR)
@@ -1714,20 +1739,36 @@ void NeighborhoodGraph::removeEdgesReliably(ObjectID id) {
 #endif
       }
       if (insertionA != insertionB) {
-        stringstream msg;
-        msg << "Graph::removeEdgeReliably:Warning. Lost connectivity! Isn't this ANNG? ID=" << id
+        if (useIncomingEdges) {
 #if defined(NGT_SHARED_MEMORY_ALLOCATOR)
-            << ". (" << node.at(i, repository.allocator).id << ":" << node.at(minj, repository.allocator).id
-            << ")";
+          if (insertionA) {
+            recordOneSidedEdge(node.at(i, repository.allocator).id, node.at(minj, repository.allocator).id);
+          } else {
+            recordOneSidedEdge(node.at(minj, repository.allocator).id, node.at(i, repository.allocator).id);
+          }
 #else
-            << ". (" << node[i].id << ":" << node[minj].id << ")";
+          if (insertionA) {
+            recordOneSidedEdge(node[i].id, node[minj].id);
+          } else {
+            recordOneSidedEdge(node[minj].id, node[i].id);
+          }
+#endif
+        } else {
+          stringstream msg;
+          msg << "Graph::removeEdgeReliably:Warning. Lost connectivity! Isn't this ANNG? ID=" << id
+#if defined(NGT_SHARED_MEMORY_ALLOCATOR)
+              << ". (" << node.at(i, repository.allocator).id << ":" << node.at(minj, repository.allocator).id
+              << ")";
+#else
+              << ". (" << node[i].id << ":" << node[minj].id << ")";
 #endif
 #ifdef NGT_FORCED_REMOVE
-        msg << " Anyway continue...";
-        cerr << msg.str() << endl;
+          msg << " Anyway continue...";
+          cerr << msg.str() << endl;
 #else
-        NGTThrowException(msg.str());
+          NGTThrowException(msg.str());
 #endif
+        }
       }
       if ((i + 1 < node.size()) && (i + 1 != (unsigned int)minj)) {
         ObjectDistance tmpr;
@@ -1862,6 +1903,7 @@ typedef NGT::ThreadPool<TruncationSearchJob, TruncationSearchSharedData *, Trunc
     TruncationSearchThreadPool;
 
 int NeighborhoodGraph::truncateEdgesOptimally(ObjectID id, GraphNode &results, size_t truncationSize) {
+  invalidateIncomingEdges();
 
   ObjectDistances delNodes;
 
@@ -2039,4 +2081,141 @@ int NeighborhoodGraph::truncateEdgesOptimally(ObjectID id, GraphNode &results, s
   size_t delsize = osize - results.size();
 
   return delsize;
+}
+
+void NeighborhoodGraph::buildIncomingEdges() {
+  invalidateIncomingEdges();
+  const size_t size = repository.size();
+  incomingEdges.clear();
+  if (size == 0) {
+    incomingEdgesState = IncomingEdgesValid;
+    return;
+  }
+  incomingEdges.resize(size + 1);
+  typedef std::pair<ObjectID, ObjectID> EdgePair;
+  const size_t chunkCount = 5;
+  const size_t chunkSize  = (size + chunkCount - 1) / chunkCount;
+#ifdef _OPENMP
+  const int maxThreads = omp_get_max_threads();
+#else
+  const int maxThreads = 1;
+#endif
+  std::vector<EdgePair> pairs;
+  for (size_t lo = 1; lo <= size; lo += chunkSize) {
+    const size_t hi = std::min(size, lo + chunkSize - 1);
+    pairs.clear();
+    {
+      std::vector<std::vector<EdgePair>> buffers(maxThreads);
+#ifdef _OPENMP
+#pragma omp parallel
+#endif
+      {
+#ifdef _OPENMP
+        auto &buffer = buffers[omp_get_thread_num()];
+#else
+        auto &buffer = buffers[0];
+#endif
+#ifdef _OPENMP
+#pragma omp for schedule(dynamic, 1024)
+#endif
+        for (int64_t sid = lo; sid <= static_cast<int64_t>(hi); sid++) {
+          if (repository.isEmpty(sid)) {
+            continue;
+          }
+          GraphNode &node = *getNode(sid);
+#if defined(NGT_SHARED_MEMORY_ALLOCATOR)
+          for (GraphNode::iterator i = node.begin(repository.allocator); i != node.end(repository.allocator);
+               ++i) {
+#else
+          for (GraphNode::iterator i = node.begin(); i != node.end(); ++i) {
+#endif
+            const ObjectID tid = (*i).id;
+            if (tid == static_cast<ObjectID>(sid) || tid >= incomingEdges.size()) {
+              continue;
+            }
+            buffer.emplace_back(tid, static_cast<ObjectID>(sid));
+          }
+        }
+      }
+      for (auto &buffer : buffers) {
+        pairs.insert(pairs.end(), buffer.begin(), buffer.end());
+        std::vector<EdgePair>().swap(buffer);
+      }
+    }
+    std::sort(pairs.begin(), pairs.end());
+    std::vector<std::pair<ObjectID, std::pair<size_t, size_t>>> ranges;
+    {
+      size_t begin = 0;
+      for (size_t i = 1; i <= pairs.size(); i++) {
+        if (i == pairs.size() || pairs[i].first != pairs[begin].first) {
+          ranges.emplace_back(pairs[begin].first, std::make_pair(begin, i));
+          begin = i;
+        }
+      }
+    }
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, 64)
+#endif
+    for (int64_t ri = 0; ri < static_cast<int64_t>(ranges.size()); ri++) {
+      const ObjectID target = ranges[ri].first;
+      const size_t begin    = ranges[ri].second.first;
+      const size_t end      = ranges[ri].second.second;
+      auto &edges           = incomingEdges[target];
+      const size_t base     = edges.size();
+      edges.resize(base + end - begin);
+      for (size_t i = begin; i < end; i++) {
+        edges[base + i - begin] = pairs[i].second;
+      }
+    }
+  }
+  {
+    size_t totalEdges = 0;
+    for (auto &edges : incomingEdges) {
+      totalEdges += edges.size();
+    }
+    if (totalEdges != 0) {
+      std::vector<uint64_t> stamp(size + 2, 0);
+#ifdef _OPENMP
+#pragma omp parallel
+#endif
+      {
+#ifdef _OPENMP
+        const uint64_t stampBase = static_cast<uint64_t>(omp_get_thread_num()) << 48;
+#else
+        const uint64_t stampBase = 0;
+#endif
+        uint64_t stampCounter = 0;
+#ifdef _OPENMP
+#pragma omp for schedule(dynamic, 64)
+#endif
+        for (int64_t x = 1; x <= static_cast<int64_t>(size); x++) {
+          auto &edges = incomingEdges[x];
+          if (edges.empty()) {
+            continue;
+          }
+          const uint64_t currentStamp = stampBase + (++stampCounter);
+          GraphNode &node             = *getNode(x);
+#if defined(NGT_SHARED_MEMORY_ALLOCATOR)
+          for (GraphNode::iterator i = node.begin(repository.allocator); i != node.end(repository.allocator);
+               ++i) {
+#else
+          for (GraphNode::iterator i = node.begin(); i != node.end(); ++i) {
+#endif
+            if ((*i).id < stamp.size()) {
+              stamp[(*i).id] = currentStamp;
+            }
+          }
+          size_t widx = 0;
+          for (size_t ridx = 0; ridx < edges.size(); ridx++) {
+            if (stamp[edges[ridx]] == currentStamp) {
+              continue;
+            }
+            edges[widx++] = edges[ridx];
+          }
+          edges.resize(widx);
+        }
+      }
+    }
+  }
+  incomingEdgesState = IncomingEdgesValid;
 }

@@ -101,11 +101,11 @@ void NGT::Index::open(const string &database, bool rdOnly, NGT::Index::OpenType 
   Index *idx = 0;
   if ((prop.indexType == NGT::Index::Property::GraphAndTree) &&
       ((openType & NGT::Index::OpenTypeGraphDisabled) == 0)) {
-    idx = new NGT::GraphAndTreeIndex(database, prop, rdOnly);
+    idx = new NGT::GraphAndTreeIndex(database, prop, rdOnly, openType);
   } else if ((prop.indexType == NGT::Index::Property::Graph) ||
              ((openType & NGT::Index::OpenTypeGraphDisabled) != 0)) {
 #ifdef NGT_SHARED_MEMORY_ALLOCATOR
-    idx = new NGT::GraphIndex(database, rdOnly);
+    idx = new NGT::GraphIndex(database, rdOnly, openType);
 #else
     idx = new NGT::GraphIndex(database, rdOnly, openType);
 #endif
@@ -1273,6 +1273,11 @@ void NGT::GraphIndex::loadIndex(const string &ifile, bool readOnly, NGT::Index::
       NGTThrowException(msg);
     }
   }
+
+  if (!readOnly && (openType & NGT::Index::OpenTypeIncomingEdgesEnabled) != 0 &&
+      (openType & NGT::Index::OpenTypeGraphDisabled) == 0) {
+    buildIncomingEdgesIfNecessary();
+  }
 }
 
 void NGT::GraphIndex::saveObjectRepository(const std::string &ofile) {
@@ -1317,7 +1322,8 @@ void NGT::GraphIndex::saveProperty(const std::string &file) { NGT::Property::sav
 void NGT::GraphIndex::exportProperty(const std::string &file) { NGT::Property::exportProperty(*this, file); }
 
 #ifdef NGT_SHARED_MEMORY_ALLOCATOR
-NGT::GraphIndex::GraphIndex(const string &allocator, bool rdonly) : readOnly(rdonly) {
+NGT::GraphIndex::GraphIndex(const string &allocator, bool rdonly, NGT::Index::OpenType openType)
+    : readOnly(rdonly) {
   NGT::Property prop;
   prop.load(allocator);
   if (prop.databaseType != NGT::Index::Property::DatabaseType::MemoryMappedFile) {
@@ -1330,6 +1336,9 @@ NGT::GraphIndex::GraphIndex(const string &allocator, bool rdonly) : readOnly(rdo
   searchUnupdatableGraph         = methods.plain;
   searchUnupdatableGraphFiltered = methods.filtered;
 #endif
+  if (!readOnly && (openType & NGT::Index::OpenTypeIncomingEdgesEnabled) != 0) {
+    buildIncomingEdgesIfNecessary();
+  }
 }
 
 NGT::GraphAndTreeIndex::GraphAndTreeIndex(const string &allocator, NGT::Property &prop)
